@@ -291,6 +291,44 @@ static void list_devices(const char *match)
 	closedir(d);
 }
 
+/* Copy a raw partition into a tmpfs file so rmtfs can serve it read-write
+ * without ever writing to the phone's flash. */
+static void seed_efs(const char *part, const char *dest, size_t max)
+{
+	char dev[64];
+	char buf[65536];
+	size_t total = 0;
+	int in, out;
+
+	if (find_part(part, dev, sizeof(dev)) < 0) {
+		klog("efs: %s not found\n", part);
+		return;
+	}
+	in = open(dev, O_RDONLY);
+	if (in < 0) {
+		klog("efs: open %s: %s\n", dev, strerror(errno));
+		return;
+	}
+	out = open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (out < 0) {
+		klog("efs: create %s: %s\n", dest, strerror(errno));
+		close(in);
+		return;
+	}
+	while (total < max) {
+		ssize_t n = read(in, buf, sizeof(buf));
+
+		if (n <= 0)
+			break;
+		if (write(out, buf, n) != n)
+			break;
+		total += n;
+	}
+	close(in);
+	close(out);
+	klog("efs: %s -> %s (%zu bytes)\n", part, dest, total);
+}
+
 /* The firmware lives on the phone's own partitions; the remoteproc/wifi probes
  * run before init mounts them, so bind the devices again afterwards. */
 static void mount_firmware(void)
@@ -332,6 +370,45 @@ static void mount_firmware(void)
 	list_devices("wifi");
 	rebind("qcom_q6v5_pas", "4080000.remoteproc");
 	rebind("ath10k_snoc", "18800000.wifi");
+	/* rmtfs (EFS) and pd-mapper (PD map) must run before the modem boots;
+	 * their stderr goes to /dev/kmsg so the RAM log carries it. */
+	{
+		seed_efs("modemst1", "/run/rmtfs/modem_fs1", 8 << 20);
+		seed_efs("modemst2", "/run/rmtfs/modem_fs2", 8 << 20);
+		seed_efs("fsc", "/run/rmtfs/modem_fsc", 64 << 10);
+		seed_efs("fsg", "/run/rmtfs/modem_fsg", 8 << 20);
+
+		static const char *const progs[][6] = {
+			{ "/bin/rmtfs", "rmtfs", "-v", "-o", "/run/rmtfs", NULL },
+			{ "/bin/pd-mapper", "pd-mapper", NULL, NULL, NULL, NULL },
+		};
+		int j;
+
+		for (j = 0; j < (int)ARRAY_SIZE(progs); j++) {
+			if (access(progs[j][0], X_OK) != 0) {
+				klog("service: %s missing\n", progs[j][0]);
+				continue;
+			}
+			if (fork() == 0) {
+				char *const *argv = (char *const *)&progs[j][1];
+				int fd = open("/dev/kmsg", O_WRONLY);
+
+				if (fd >= 0) {
+					dup2(fd, 1);
+					dup2(fd, 2);
+				}
+				execv(progs[j][0], argv);
+				_exit(127);
+			}
+			klog("service: started %s\n", progs[j][1]);
+		}
+		sleep(2);
+		list_dir("/sys/class/rmtfs");
+		list_dir("/sys/bus/rpmsg/devices");
+		klog("service: rmtfs_mem1 %s\n",
+		     access("/dev/qcom_rmtfs_mem1", R_OK | W_OK) == 0 ? "present" : "missing");
+	}
+
 	/* start the modem so PAS authenticates the firmware */
 	{
 		int fd = open("/sys/class/remoteproc/remoteproc0/state", O_WRONLY);

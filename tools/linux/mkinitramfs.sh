@@ -18,6 +18,13 @@ mkdir -p "$TMP/dev" "$TMP/proc" "$TMP/sys" "$TMP/tmp" "$TMP/run"
 "$CC" -static -Os -s -o "$TMP/init" "$ROOT/tools/linux/init.c"
 chmod 755 "$TMP/init"
 
+# prebuilt static helpers (rmtfs, pd-mapper): see tools/linux/bin/README
+mkdir -p "$TMP/bin" "$TMP/run/rmtfs"
+if compgen -G "$ROOT/tools/linux/bin/*" >/dev/null; then
+	cp "$ROOT"/tools/linux/bin/* "$TMP/bin/"
+	chmod 755 "$TMP"/bin/*
+fi
+
 mkdir -p "$(dirname "$OUT")"
 (cd "$TMP" && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | gzip -9) > "$OUT"
 ls -l "$OUT"
