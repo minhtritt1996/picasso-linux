@@ -32,9 +32,12 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
 
 ## Known blockers
 
-- **TLMM probe stalls** on its first register read (pin 0, tile EAST @ `0xf900000`):
-  the kernel is left with `&tlmm { status = "disabled"; }` until this is understood.
-  Needed for UFS reset, touch and the peripheral pinmux.
+- **TLMM**: only the **south** tile answers; reads of the west (`0xf500000`) and
+  east (`0xf900000`) windows never return and hang the worker. The driver now
+  skips tiles the board leaves out of the mapping, and the picasso DTS describes
+  only `south` (touch reset/IRQ gpio4/5, panel TE gpio10, UFS reset). The probe
+  completes (`probe of f100000.pinctrl ... returned 0`). West/east pins (camera,
+  some QUP) are unavailable until the correct bases/clocks are found.
 - `arm-smmu 3da0000` (Adreno SMMU) fails with -110 at ~10.7 s; harmless so far,
   GPU needs it later.
 - Display is simpledrm only (no DSI/panel driver yet); touch, UFS, Wi-Fi not started.

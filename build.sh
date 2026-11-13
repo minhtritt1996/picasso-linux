@@ -176,6 +176,7 @@ export_patches() {
 	local p2="picasso/0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch"
 	local p3="picasso/0003-printk-ram-console.patch"
 	local p4="picasso/0004-base-dd-probe-trace.patch"
+	local p5="picasso/0005-pinctrl-msm-skip-unmapped-tiles.patch"
 	local t
 	git -C "$WS" add -N arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts 2>/dev/null || true
 	t=$(mktemp)
@@ -203,6 +204,11 @@ export_patches() {
 	git -C "$WS" diff HEAD -- drivers/base/dd.c > "$t"
 	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p4 (already applied/committed?)"; }
 	mv "$t" "$PATCHES/$p4"
+	echo "==> Exporting $p5"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/pinctrl/qcom/pinctrl-msm.c > "$t"
+	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p5 (already applied/committed?)"; }
+	mv "$t" "$PATCHES/$p5"
 	echo "    [OK] regenerated; run ./build.sh check"
 }
 

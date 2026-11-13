@@ -19,3 +19,4 @@ picasso/0001-arm64-dts-qcom-sm7250-move-board-reserved-memory.patch
 picasso/0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch
 picasso/0003-printk-ram-console.patch
 picasso/0004-base-dd-probe-trace.patch
+picasso/0005-pinctrl-msm-skip-unmapped-tiles.patch

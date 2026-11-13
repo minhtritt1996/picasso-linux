@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..e63c0e160
+index 000000000..7df8fc467
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,282 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -239,11 +239,15 @@ index 000000000..e63c0e160
 +
 +
 +/*
-+ * Bring-up: the TLMM probe stalls on its first register read, so keep it off
-+ * until that is understood (it is needed later for UFS reset and peripherals).
++ * Only the south tile answers on this board: reads of the west (0xf500000)
++ * and east (0xf900000) tiles never return and hang the accessing worker, so
++ * they are left out of the mapping (the driver skips unmapped tiles).
++ * South holds the touch reset/IRQ (gpio4/5), the panel TE (gpio10) and the
++ * UFS reset pin.
 + */
 +&tlmm {
-+	status = "disabled";
++	reg = <0x0 0x0f100000 0x0 0x300000>;
++	reg-names = "south";
 +};
 +
 +/*

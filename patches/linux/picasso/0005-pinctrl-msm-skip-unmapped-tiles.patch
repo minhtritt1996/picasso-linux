@@ -1,0 +1,32 @@
+diff --git a/drivers/pinctrl/qcom/pinctrl-msm.c b/drivers/pinctrl/qcom/pinctrl-msm.c
+index 27f06bbc1..31e8ed4c9 100644
+--- a/drivers/pinctrl/qcom/pinctrl-msm.c
++++ b/drivers/pinctrl/qcom/pinctrl-msm.c
+@@ -86,11 +86,15 @@ struct msm_pinctrl {
+ static u32 msm_readl_##name(struct msm_pinctrl *pctrl, \
+ 			    const struct msm_pingroup *g) \
+ { \
++	if (!pctrl->regs[g->tile]) \
++		return 0; \
+ 	return readl(pctrl->regs[g->tile] + g->name##_reg); \
+ } \
+ static void msm_writel_##name(u32 val, struct msm_pinctrl *pctrl, \
+ 			      const struct msm_pingroup *g) \
+ { \
++	if (!pctrl->regs[g->tile]) \
++		return; \
+ 	writel(val, pctrl->regs[g->tile] + g->name##_reg); \
+ }
+ 
+@@ -1614,6 +1618,11 @@ int msm_pinctrl_probe(struct platform_device *pdev,
+ 		for (i = 0; i < soc_data->ntiles; i++) {
+ 			res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+ 							   soc_data->tiles[i]);
++			if (!res) {
++				/* the board leaves this tile out: never touch it */
++				pctrl->regs[i] = NULL;
++				continue;
++			}
+ 			pctrl->regs[i] = devm_ioremap_resource(&pdev->dev, res);
+ 			if (IS_ERR(pctrl->regs[i]))
+ 				return PTR_ERR(pctrl->regs[i]);
