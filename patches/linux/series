@@ -1,0 +1,19 @@
+# Ordered patch series, applied on top of patches/linux/UPSTREAM.
+# vendor/ is the unmodified avicii-mainline port for the same SoC.
+# picasso/ is this device's delta; regenerate with ./build.sh export-patches.
+vendor/01-bindings.patch
+vendor/02-clk.patch
+vendor/03-pinctrl.patch
+vendor/04-interconnect.patch
+vendor/05-soc-pm.patch
+vendor/06-ufs.patch
+vendor/07-display.patch
+vendor/08-iommu.patch
+vendor/09-power.patch
+vendor/10-touch.patch
+vendor/11-remoteproc.patch
+vendor/12-audio.patch
+vendor/13-media.patch
+vendor/14-dts.patch
+picasso/0001-arm64-dts-qcom-sm7250-move-board-reserved-memory.patch
+picasso/0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch

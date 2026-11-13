@@ -1,0 +1,13 @@
+# Read-only upstream clones and build trees
+/upstream/
+/build/
+
+# Tool output
+__pycache__/
+*.pyc
+*.o
+*.dtb
+*.dtbo
+
+# Local dtschema install used by ./build.sh check
+/.venv-dtschema/

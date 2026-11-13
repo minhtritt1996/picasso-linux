@@ -1,0 +1,310 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm7250-oneplus-avicii.dts b/arch/arm64/boot/dts/qcom/sm7250-oneplus-avicii.dts
+index 0cdad894d..e1a85c818 100644
+--- a/arch/arm64/boot/dts/qcom/sm7250-oneplus-avicii.dts
++++ b/arch/arm64/boot/dts/qcom/sm7250-oneplus-avicii.dts
+@@ -47,6 +47,149 @@ memory@80000000 {
+ 	};
+ 
+ 	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/*
++		 * Map of the OnePlus Nord (avicii) OxygenOS 12 devicetree:
++		 * https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm7250
++		 * branch oneplus/sm7250_s_12.1_oneplus_nord,
++		 * vendor/qcom/proprietary/devicetree-4.19/oplus/lito.dtsi
++		 * (pil_cvp 0x9c700000, pil_cdsp 0x9cc00000; the 0x86000000 layout is
++		 * #if'd out there).  Firmware images are all relocatable, so their
++		 * link addresses (cdsp 0x87400000, npu 0x86900000, adsp 0x89200000,
++		 * modem 0x8c000000) are not binding.
++		 */
++		hyp_mem: hyp@80000000 {
++			reg = <0x0 0x80000000 0x0 0x600000>;
++			no-map;
++		};
++
++		xbl_aop_mem: xbl-aop@80700000 {
++			reg = <0x0 0x80700000 0x0 0x160000>;
++			no-map;
++		};
++
++		cmd_db: cmd-db@80860000 {
++			compatible = "qcom,cmd-db";
++			reg = <0x0 0x80860000 0x0 0x20000>;
++			no-map;
++		};
++
++		xbl_uefi_mem: xbl-uefi@80880000 {
++			reg = <0 0x80880000 0 0x14000>;
++			no-map;
++		};
++
++		smem_mem: smem@80900000 {
++			compatible = "qcom,smem";
++			reg = <0x0 0x80900000 0x0 0x200000>;
++			no-map;
++			hwlocks = <&tcsr_mutex 3>;
++		};
++
++		removed_mem: removed@80b00000 {
++			reg = <0x0 0x80b00000 0x0 0x1300000>;
++			no-map;
++		};
++
++		sec_apps_mem: sec-apps@808ff000 {
++			reg = <0x0 0x808ff000 0x0 0x1000>;
++			no-map;
++		};
++
++		qtee_apps_mem: qtee-apps@81e00000 {
++			reg = <0x0 0x81e00000 0x0 0x6800000>;
++			no-map;
++		};
++
++		adsp_mem: adsp@89200000 {
++			reg = <0x0 0x89200000 0x0 0x2800000>;
++			no-map;
++		};
++
++		wlan_fw_mem: wlan-fw@8ba00000 {
++			reg = <0x0 0x8ba00000 0x0 0x200000>;
++			no-map;
++		};
++
++		ipa_fw_mem: ipa-fw@8bc00000 {
++			reg = <0x0 0x8bc00000 0x0 0x10000>;
++			no-map;
++		};
++
++		ipa_gsi_mem: ipa-gsi@8bc10000 {
++			reg = <0x0 0x8bc10000 0x0 0x5400>;
++			no-map;
++		};
++
++		/*
++		 * The firmware reserves 0x8bc15400..0x8bc17400 for the GPU zap
++		 * shader, but TrustZone only accepts a 4 KiB aligned load
++		 * address, so the unaligned head is a separate region.
++		 */
++		gpu_pad_mem: gpu-pad@8bc15400 {
++			reg = <0x0 0x8bc15400 0x0 0xc00>;
++			no-map;
++		};
++
++		gpu_mem: gpu@8bc16000 {
++			reg = <0x0 0x8bc16000 0x0 0x1400>;
++			no-map;
++		};
++
++		reserved_pil_mem: reserved-pil@8bc17400 {
++			reg = <0x0 0x8bc17400 0x0 0x3e8c00>;
++			no-map;
++		};
++
++		modem_wlan_mem: modem-wlan@8c000000 {
++			reg = <0x0 0x8c000000 0x0 0xf800000>;
++			no-map;
++		};
++
++		camera_mem: camera@9b800000 {
++			reg = <0x0 0x9b800000 0x0 0x500000>;
++			no-map;
++		};
++
++		npu_mem: npu@9bd00000 {
++			reg = <0x0 0x9bd00000 0x0 0x500000>;
++			no-map;
++		};
++
++		video_mem: video@9c200000 {
++			reg = <0x0 0x9c200000 0x0 0x500000>;
++			no-map;
++		};
++
++		cvp_mem: cvp@9c700000 {
++			reg = <0x0 0x9c700000 0x0 0x500000>;
++			no-map;
++		};
++
++		cdsp_mem: cdsp@9cc00000 {
++			reg = <0x0 0x9cc00000 0x0 0x1e00000>;
++			no-map;
++		};
++
++		cdsp_sec_mem: cdsp-sec@9f400000 {
++			reg = <0x0 0x9f400000 0x0 0xc00000>;
++			no-map;
++		};
++
++		cont_splash_mem: cont-splash@a0000000 {
++			reg = <0x0 0xa0000000 0x0 0x2300000>;
++			iommu-addresses = <&mdss 0x0 0xa0000000 0x0 0x2300000>;
++			no-map;
++		};
++
++		dfps_data_mem: dfps-data@a2300000 {
++			reg = <0x0 0xa2300000 0x0 0x100000>;
++			no-map;
++		};
++
+ 		/*
+ 		 * Downstream: 0xcbe00000 + 0x400000 including a 0x1000
+ 		 * OnePlus-only devinfo zone at the end. Mainline has no such
+diff --git a/arch/arm64/boot/dts/qcom/sm7250.dtsi b/arch/arm64/boot/dts/qcom/sm7250.dtsi
+index e2279ea4a..bb2af0fd6 100644
+--- a/arch/arm64/boot/dts/qcom/sm7250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm7250.dtsi
+@@ -433,151 +433,6 @@ cluster_pd: power-domain-cpu-cluster0 {
+ 		};
+ 	};
+ 
+-	/*
+-	 * Map of the OnePlus Nord (avicii) OxygenOS 12 devicetree:
+-	 * https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm7250
+-	 * branch oneplus/sm7250_s_12.1_oneplus_nord,
+-	 * vendor/qcom/proprietary/devicetree-4.19/oplus/lito.dtsi
+-	 * (pil_cvp 0x9c700000, pil_cdsp 0x9cc00000; the 0x86000000 layout is
+-	 * #if'd out there).  Firmware images are all relocatable, so their
+-	 * link addresses (cdsp 0x87400000, npu 0x86900000, adsp 0x89200000,
+-	 * modem 0x8c000000) are not binding.
+-	 */
+-	reserved_memory: reserved-memory {
+-		#address-cells = <2>;
+-		#size-cells = <2>;
+-		ranges;
+-
+-		hyp_mem: hyp@80000000 {
+-			reg = <0x0 0x80000000 0x0 0x600000>;
+-			no-map;
+-		};
+-
+-		xbl_aop_mem: xbl-aop@80700000 {
+-			reg = <0x0 0x80700000 0x0 0x160000>;
+-			no-map;
+-		};
+-
+-		cmd_db: cmd-db@80860000 {
+-			compatible = "qcom,cmd-db";
+-			reg = <0x0 0x80860000 0x0 0x20000>;
+-			no-map;
+-		};
+-
+-		xbl_uefi_mem: xbl-uefi@80880000 {
+-			reg = <0 0x80880000 0 0x14000>;
+-			no-map;
+-		};
+-
+-		smem_mem: smem@80900000 {
+-			compatible = "qcom,smem";
+-			reg = <0x0 0x80900000 0x0 0x200000>;
+-			no-map;
+-			hwlocks = <&tcsr_mutex 3>;
+-		};
+-
+-		removed_mem: removed@80b00000 {
+-			reg = <0x0 0x80b00000 0x0 0x1300000>;
+-			no-map;
+-		};
+-
+-		sec_apps_mem: sec-apps@808ff000 {
+-			reg = <0x0 0x808ff000 0x0 0x1000>;
+-			no-map;
+-		};
+-
+-		qtee_apps_mem: qtee-apps@81e00000 {
+-			reg = <0x0 0x81e00000 0x0 0x6800000>;
+-			no-map;
+-		};
+-
+-		adsp_mem: adsp@89200000 {
+-			reg = <0x0 0x89200000 0x0 0x2800000>;
+-			no-map;
+-		};
+-
+-		wlan_fw_mem: wlan-fw@8ba00000 {
+-			reg = <0x0 0x8ba00000 0x0 0x200000>;
+-			no-map;
+-		};
+-
+-		ipa_fw_mem: ipa-fw@8bc00000 {
+-			reg = <0x0 0x8bc00000 0x0 0x10000>;
+-			no-map;
+-		};
+-
+-		ipa_gsi_mem: ipa-gsi@8bc10000 {
+-			reg = <0x0 0x8bc10000 0x0 0x5400>;
+-			no-map;
+-		};
+-
+-		/*
+-		 * The firmware reserves 0x8bc15400..0x8bc17400 for the GPU zap
+-		 * shader, but TrustZone only accepts a 4 KiB aligned load
+-		 * address, so the unaligned head is a separate region.
+-		 */
+-		gpu_pad_mem: gpu-pad@8bc15400 {
+-			reg = <0x0 0x8bc15400 0x0 0xc00>;
+-			no-map;
+-		};
+-
+-		gpu_mem: gpu@8bc16000 {
+-			reg = <0x0 0x8bc16000 0x0 0x1400>;
+-			no-map;
+-		};
+-
+-		reserved_pil_mem: reserved-pil@8bc17400 {
+-			reg = <0x0 0x8bc17400 0x0 0x3e8c00>;
+-			no-map;
+-		};
+-
+-		modem_wlan_mem: modem-wlan@8c000000 {
+-			reg = <0x0 0x8c000000 0x0 0xf800000>;
+-			no-map;
+-		};
+-
+-		camera_mem: camera@9b800000 {
+-			reg = <0x0 0x9b800000 0x0 0x500000>;
+-			no-map;
+-		};
+-
+-		npu_mem: npu@9bd00000 {
+-			reg = <0x0 0x9bd00000 0x0 0x500000>;
+-			no-map;
+-		};
+-
+-		video_mem: video@9c200000 {
+-			reg = <0x0 0x9c200000 0x0 0x500000>;
+-			no-map;
+-		};
+-
+-		cvp_mem: cvp@9c700000 {
+-			reg = <0x0 0x9c700000 0x0 0x500000>;
+-			no-map;
+-		};
+-
+-		cdsp_mem: cdsp@9cc00000 {
+-			reg = <0x0 0x9cc00000 0x0 0x1e00000>;
+-			no-map;
+-		};
+-
+-		cdsp_sec_mem: cdsp-sec@9f400000 {
+-			reg = <0x0 0x9f400000 0x0 0xc00000>;
+-			no-map;
+-		};
+-
+-		cont_splash_mem: cont-splash@a0000000 {
+-			reg = <0x0 0xa0000000 0x0 0x2300000>;
+-			iommu-addresses = <&mdss 0x0 0xa0000000 0x0 0x2300000>;
+-			no-map;
+-		};
+-
+-		dfps_data_mem: dfps-data@a2300000 {
+-			reg = <0x0 0xa2300000 0x0 0x100000>;
+-			no-map;
+-		};
+-	};
+-
+ 	smp2p-adsp {
+ 		compatible = "qcom,smp2p";
+ 		qcom,smem = <443>, <429>;
