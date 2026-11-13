@@ -345,7 +345,7 @@ static void console_loop(void)
 	int fd;
 
 	for (;;) {
-		fd = open("/dev/ttyGS0", O_RDWR | O_NOCTTY);
+		fd = open("/dev/ttyGS0", O_RDWR | O_NOCTTY | O_NONBLOCK);
 		if (fd < 0) {
 			sleep(1);
 			continue;
@@ -451,11 +451,19 @@ int main(void)
 
 	/* auto_reboot=<seconds>: a software reset keeps DDR, so the loader can
 	 * hand the console log to the host on the next start */
-	if (cmdline_seconds("auto_reboot=") > 0 && fork() == 0) {
-		sleep((unsigned)cmdline_seconds("auto_reboot="));
-		klog("picasso-init: auto_reboot\n");
-		sync();
-		reboot(RB_AUTOBOOT);
+	{
+		/* safety: come back to the loader after five minutes, so a lost USB
+		 * link cannot leave the phone running Linux with no way in */
+		int rs = cmdline_seconds("auto_reboot=");
+
+		if (rs < 0)
+			rs = 300;
+		if (rs > 0 && fork() == 0) {
+			sleep((unsigned)rs);
+			klog("picasso-init: auto_reboot after %d s\n", rs);
+			sync();
+			reboot(RB_AUTOBOOT);
+		}
 	}
 
 	/* PID 1 must not exit; killing init panics the kernel. */

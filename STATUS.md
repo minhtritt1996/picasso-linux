@@ -40,10 +40,12 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   some QUP) are unavailable until the correct bases/clocks are found.
 - `arm-smmu 3da0000` (Adreno SMMU) fails with -110 at ~10.7 s; harmless so far,
   GPU needs it later.
-- The g7a panel driver sends the downstream init sequence and the DPU/DSI
-  pipeline is up (`msmdrmfb`), but the panel output still needs a visual check
-  (brightness control goes through DCS 0x51; the WLED backlight driver is not
-  wired yet). Touch and Wi-Fi are not started.
+- The g7a panel driver sends the downstream init sequence and the DSC PPS; the
+  DPU/DSI pipeline is up (`msmdrmfb`) and the bootloader backlight stays on.
+  Panel content still needs verification; the DSI PLL logs a lock failure at
+  probe (`status=0`, likely the probe-time rate test). Enabling the PM8150L WLED
+  driver with guessed properties turned the backlight off - leave it to the
+  bootloader until the correct values are known. Touch and Wi-Fi are not started.
 - `userdata` is mounted read-only (f2fs). Writing a log file there needs a
   read-write mount; the console/RAM log already survives resets, so that is a
   separate decision.
