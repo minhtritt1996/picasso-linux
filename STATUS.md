@@ -101,6 +101,19 @@ on the dedicated **`bluetooth` partition** (`/dev/sde33`, vfat): init mounts it
 at `/lib/firmware/bt` and `bt/image/{crbtfw32.tlv,crnv32.bin,crnv32u.bin}` are
 present. Next: serdev `hci_qca` on the BT UART (find the vendor UART node),
 `qca,bt-sw-ctrl-gpio` = tlmm 73, then `hciattach`/`btmgmt`.
+- Done: `&uart5` (SE5, `serial@894000`) enabled with the `qup_uart5_default`
+  pins, `aliases { serial1 = &uart5; }` (geni-serial needs it, otherwise
+  `Invalid line -19`), BLUETOOTH child `qcom,wcn3990-bt` with
+  `vddio=s4a`, `vddxo=l14a`, `vddrf=l2c`, `vddch0=l10c`,
+  `swctrl-gpios = <&tlmm 73>` and `firmware-name = "bt/image/crbtfw32.tlv",
+  "bt/image/crnv32.bin"`. Kernel: `BT`, `BT_HCIUART`, `BT_HCIUART_SERDEV`,
+  `BT_HCIUART_QCA`, `SERIAL_QCOM_GENI` built in.
+- Result: `894000.serial: ttyHS1 ... is a MSM`, `Bluetooth: hci0: setting up
+  wcn399x`, then `command 0xfc00 tx timeout` /
+  `Reading QCA version information failed (-110)` in a retry loop - the chip
+  does not answer on the UART. Next: verify the four rails are actually enabled
+  (regulator state), the `swctrl-gpios` direction the driver requests, and
+  whether the chip needs an explicit enable line/`qca,bt-sw-ctrl` edge.
 
 ### Touch (Novatek NT36672C, SPI) — not started
 
