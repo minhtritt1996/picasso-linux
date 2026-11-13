@@ -257,6 +257,46 @@ static void rebind(const char *drv, const char *dev)
 	close(fd);
 }
 
+/* scan the loader log partition for an exception banner (previous boot) */
+static void scan_logdump(void)
+{
+	static char buf[1 << 20];
+	char dev[64];
+	ssize_t n;
+	int fd;
+
+	if (find_part("logdump", dev, sizeof(dev)) < 0) {
+		klog("logdump: no partition\n");
+		return;
+	}
+	fd = open(dev, O_RDONLY);
+	if (fd < 0)
+		return;
+	n = read(fd, buf, sizeof(buf));
+	close(fd);
+	if (n <= 0)
+		return;
+	klog("logdump: %zd bytes\n", n);
+	{
+		char *p = buf, *end = buf + n;
+
+		while (p < end) {
+			char *nl = memchr(p, '\n', end - p);
+			size_t len = nl ? (size_t)(nl - p) : (size_t)(end - p);
+
+			if (len < 200 &&
+			    (memmem(p, len, "Exception", 9) ||
+			     memmem(p, len, "Synchronous", 11) ||
+			     memmem(p, len, "PANIC", 5) ||
+			     memmem(p, len, "panic", 5)))
+				klog("logdump| %.*s\n", (int)len, p);
+			if (!nl)
+				break;
+			p = nl + 1;
+		}
+	}
+}
+
 /* log the state of the rails the WCN3990 needs */
 static void scan_regulators(void)
 {
@@ -440,6 +480,7 @@ static void mount_firmware(void)
 		klog("firmware: no vendor partition\n");
 	}
 
+	scan_logdump();
 	list_parts();
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso");
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso/image");
