@@ -80,13 +80,27 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   cross-build `linux-msm/rmtfs` + `linux-msm/pd-mapper` (libqrtr, AF_QIPCRTR),
   add `rmtfs_mem` reserved region (client-id 1, vmid 15), start them before
   `remoteproc0/state`.
+- Done: static aarch64 `rmtfs` (udev replaced with the `/sys/class/rmtfs/...`
+  sysfs path), `pd-mapper` (lzma stubbed, plain `.jsn` only) and `tqftpserv` in
+  `tools/linux/bin/`, packed into the initramfs by `mkinitramfs.sh`; EFS images
+  copied from `modemst1`/`modemst2`/`fsc`/`fsg` into `/run/rmtfs` (flash is never
+  written). rmtfs answers the modem's EFS requests, pd-mapper loads
+  `adspr/adsps/adspua/cdspr/modemr/modemuw.jsn`, QRTR works.
+- Still blocked: the modem trips its own watchdog ~40 s after start
+  (`dog_hal_common.c:180:DOG detects stalled initialization`); it never asks
+  pd-mapper for a domain list before that, and tqftpserv serves nothing, so the
+  stall is inside the modem firmware init, not the host services. Next: capture
+  the modem's dump (`CONFIG_QCOM_Q6V5_PAS` dump collection) or compare the
+  sequence against Android's `rmtfs` (raw-partition mode).
 
 ### Bluetooth (WCN3990) — not started
 
 Vendor node: `qca,wcn3990`, `qca,bt-sw-ctrl-gpio = <&tlmm 73>`, supplies
-`pm8150_s4` (io), `l2c` (core), `l10c` (pa), `l14a` (xtal). Firmware
-`crbtfw32.tlv`/`crnv32.bin` is **not** on the modem partition; find it before
-wiring `hci_qca` (UART + `qca,bt-sw-ctrl`).
+`pm8150_s4` (io), `l2c` (core), `l10c` (pa), `l14a` (xtal). The firmware lives
+on the dedicated **`bluetooth` partition** (`/dev/sde33`, vfat): init mounts it
+at `/lib/firmware/bt` and `bt/image/{crbtfw32.tlv,crnv32.bin,crnv32u.bin}` are
+present. Next: serdev `hci_qca` on the BT UART (find the vendor UART node),
+`qca,bt-sw-ctrl-gpio` = tlmm 73, then `hciattach`/`btmgmt`.
 
 ### Touch (Novatek NT36672C, SPI) — not started
 

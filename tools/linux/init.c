@@ -257,6 +257,31 @@ static void rebind(const char *drv, const char *dev)
 	close(fd);
 }
 
+/* log every GPT partition name (find firmware partitions) */
+static void list_parts(void)
+{
+	DIR *d = opendir("/sys/class/block");
+	struct dirent *e;
+
+	if (!d)
+		return;
+	while ((e = readdir(d)) != NULL) {
+		char path[256], buf[512];
+		char *p;
+
+		if (e->d_name[0] == '.')
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/block/%s/uevent", e->d_name);
+		if (read_file(path, buf, sizeof(buf)) <= 0)
+			continue;
+		p = strstr(buf, "PARTNAME=");
+		if (p)
+			klog("part: %s %.*s\n", e->d_name,
+			     (int)strcspn(p + 9, "\n"), p + 9);
+	}
+	closedir(d);
+}
+
 /* log the first entries of a directory (bring-up aid) */
 static void list_dir(const char *dir)
 {
@@ -295,14 +320,21 @@ static void list_devices(const char *match)
  * without ever writing to the phone's flash. */
 static void seed_efs(const char *part, const char *dest, size_t max)
 {
-	char dev[64];
-	char buf[65536];
+	char dev[64], path[128], buf[65536];
 	size_t total = 0;
 	int in, out;
 
 	if (find_part(part, dev, sizeof(dev)) < 0) {
 		klog("efs: %s not found\n", part);
 		return;
+	}
+	/* never read past the real partition: the EFS image must be exact */
+	snprintf(path, sizeof(path), "/sys/class/block/%s/size", dev + 5);
+	if (read_file(path, buf, sizeof(buf)) > 0) {
+		unsigned long long sectors = strtoull(buf, NULL, 10);
+
+		if (sectors * 512 < max)
+			max = sectors * 512;
 	}
 	in = open(dev, O_RDONLY);
 	if (in < 0) {
@@ -348,6 +380,20 @@ static void mount_firmware(void)
 		klog("firmware: no modem partition\n");
 	}
 
+	mkdir_parents("/lib/firmware/bt");
+	if (find_part("bluetooth", dev, sizeof(dev)) == 0) {
+		if (try_mount(dev, "/lib/firmware/bt", "vfat") == 0 ||
+		    try_mount(dev, "/lib/firmware/bt", "ext4") == 0) {
+			klog("firmware: bluetooth %s mounted\n", dev);
+			list_dir("/lib/firmware/bt");
+			list_dir("/lib/firmware/bt/image");
+		} else {
+			klog("firmware: bluetooth mount failed: %s\n", strerror(errno));
+		}
+	} else {
+		klog("firmware: no bluetooth partition\n");
+	}
+
 	mkdir_parents("/vendor");
 	if (find_part("vendor", dev, sizeof(dev)) == 0) {
 		if (try_mount(dev, "/vendor", "erofs") == 0)
@@ -364,6 +410,7 @@ static void mount_firmware(void)
 		klog("firmware: no vendor partition\n");
 	}
 
+	list_parts();
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso");
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso/image");
 	list_devices("remoteproc");
