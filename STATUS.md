@@ -40,7 +40,10 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   some QUP) are unavailable until the correct bases/clocks are found.
 - `arm-smmu 3da0000` (Adreno SMMU) fails with -110 at ~10.7 s; harmless so far,
   GPU needs it later.
-- Display is simpledrm only (no DSI/panel driver yet); touch, UFS, Wi-Fi not started.
+- Display is simpledrm only (no DSI/panel driver yet); touch, Wi-Fi not started.
+- UFS enumerates but partitions/userdata are not mounted yet: next step is a
+  read-only mount of `userdata` so the console log can be written to a file
+  (the loader's `logdump` + `get_staged` already carries it across resets).
 
 ## Verified on hardware
 
@@ -51,3 +54,4 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
 | console | `uname` → `Linux 7.3.0-rc7 ... aarch64`, `mem` → 5432852 kB |
 | console reboot | `reboot` → loader (`product: xnuloader`) in 10 s |
 | log persistence | `get_staged` shows `== previous kernel console ==` after reset |
+| UFS | `ufshcd-qcom 1d84000.ufshc` probe 0; 6 LUNs: `sda` 127 GB, `sdb`/`sdc` 16 MiB, `sdd` 32 MiB, `sde` 1 GiB, `sdf` 28 MiB |
