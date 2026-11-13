@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..932589918
+index 000000000..3287f3a9d
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,194 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -213,6 +213,16 @@ index 000000000..932589918
 +		dfps_data_mem: dfps-data@a2300000 {
 +			reg = <0x0 0xa2300000 0x0 0x100000>;
 +			no-map;
++		};
++
++		/*
++		 * The XNUP payload window used by the Mu-Silicium chain: linux.efi,
++		 * the kernel Image, the ramdisk and this DTB live here. Reserved
++		 * but not no-map, so the kernel never hands it out yet can read
++		 * the ramdisk at the address in /chosen/linux,initrd-start.
++		 */
++		linux_payload_mem: linux-payload@f0000000 {
++			reg = <0x0 0xf0000000 0x0 0x4000000>;
 +		};
 +	};
 +};

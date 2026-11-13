@@ -1,0 +1,5 @@
+# Upstream for the loader patch (freestanding UEFI XnuLoader, reused for Linux)
+
+hakios-xnu-kernel:
+  repository: https://github.com/oosexgang/hakios-xnu-kernel.git
+  revision:   96ffbc532e970f3540885755d457e401e04d4707

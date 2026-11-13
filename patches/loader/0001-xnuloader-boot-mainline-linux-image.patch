@@ -1,0 +1,112 @@
+diff --git a/xnuloader/loader.c b/xnuloader/loader.c
+index 422f9d3..2d7ba0e 100644
+--- a/xnuloader/loader.c
++++ b/xnuloader/loader.c
+@@ -41,6 +41,18 @@ struct payload_entry { char name[16]; uint32_t size; uint32_t reserved; };
+ #define PANIC_LOG_BASE      (PAYLOAD_BASE + PAYLOAD_MAX_SIZE - 0x100000ULL)
+ #define PAYLOAD_MAX_SIZE    0x04000000ULL         /* RAM reserved for the payload in the UEFI memory map */
+ 
++/* ------------------------------------------------------------------------ */
++/* Linux (mainline arm64 EFI stub) boot from the same payload               */
++
++/* EFI configuration table the stub reads the device tree from (libstub/fdt.c: get_fdt). */
++#define DEVICE_TREE_GUID { 0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } }
++
++/* efi.h keeps these entries untyped; the ABI is fixed by the UEFI spec. */
++typedef efi_status (EFIAPI *efi_install_configuration_table_fn)(efi_guid *guid, void *table);
++typedef efi_status (EFIAPI *efi_load_image_fn)(uint8_t boot_policy, efi_handle parent, void *device_path,
++    void *source, uint64_t source_size, efi_handle *image);
++typedef efi_status (EFIAPI *efi_start_image_fn)(efi_handle image, uint64_t *exit_data_size, void *exit_data);
++
+ /* ------------------------------------------------------------------------ */
+ /* XNU structures (pexpert/pexpert/arm64/boot.h, mach-o/loader.h)           */
+ 
+@@ -2567,6 +2579,13 @@ struct payload_info {
+ 	uint32_t resident_size;
+ 	const char *kernel_version;     /* kernel.ver: the version of the kernel in this payload (tools/kernel-version.py) */
+ 	int usb_mode;
++	/* mainline Linux: an "Image" entry makes the loader boot Linux instead of XNU */
++	const uint8_t *linux_image;
++	uint32_t linux_image_size;
++	const uint8_t *linux_initrd;
++	uint32_t linux_initrd_size;
++	const uint8_t *linux_dtb;
++	uint32_t linux_dtb_size;
+ };
+ 
+ static uint64_t
+@@ -2646,6 +2665,15 @@ parse_payload(struct payload_info *pi, int verbose)
+ 			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
+ 		} else if (str_eq(e->name, "usb")) {
+ 			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
++		} else if (str_eq(e->name, "Image")) {
++			pi->linux_image = p + sizeof(*e);         /* mainline arm64 Image (PE32+ EFI stub) */
++			pi->linux_image_size = e->size;
++		} else if (str_eq(e->name, "initrd")) {
++			pi->linux_initrd = p + sizeof(*e);        /* cpio.gz ramdisk, handed over via /chosen */
++			pi->linux_initrd_size = e->size;
++		} else if (str_eq(e->name, "dtb")) {
++			pi->linux_dtb = p + sizeof(*e);           /* mainline DTB, installed as a config table */
++			pi->linux_dtb_size = e->size;
+ 		}
+ 		p += sizeof(*e) + ((e->size + 15) & ~15u);
+ 	}
+@@ -2822,6 +2850,43 @@ choose_window(const struct payload_info *pi)
+  */
+ static int starts_with(const char *s, const char *prefix);
+ 
++/*
++ * Boot a mainline Linux arm64 Image. The EFI stub reads the device tree from
++ * the EFI configuration table and the ramdisk from /chosen (patched at pack
++ * time); the payload region is reserved in the board DTS so the ramdisk is
++ * never handed to the kernel as free memory.
++ */
++static int
++boot_linux(const struct payload_info *pi)
++{
++	static efi_guid dtb_guid = DEVICE_TREE_GUID;
++	efi_handle handle;
++	efi_status s;
++
++	print("== LINUX Image %x @ %x, initrd %x @ %x, dtb %x @ %x ==\n",
++	    (uint64_t)pi->linux_image_size, (uint64_t)pi->linux_image,
++	    (uint64_t)pi->linux_initrd_size, (uint64_t)pi->linux_initrd,
++	    (uint64_t)pi->linux_dtb_size, (uint64_t)pi->linux_dtb);
++	if (pi->linux_image == NULL || pi->linux_initrd == NULL || pi->linux_dtb == NULL) {
++		print("linux: need Image, initrd and dtb in the payload\n");
++		return 0;
++	}
++	s = ((efi_install_configuration_table_fn)BS->install_configuration_table)(&dtb_guid, (void *)pi->linux_dtb);
++	if (EFI_ERROR(s)) {
++		print("linux: install_configuration_table failed %x\n", s);
++		return 0;
++	}
++	s = ((efi_load_image_fn)BS->load_image)(0, IMAGE, NULL, (void *)pi->linux_image, pi->linux_image_size, &handle);
++	if (EFI_ERROR(s)) {
++		print("linux: LoadImage failed %x\n", s);
++		return 0;
++	}
++	print("linux: starting the kernel\n");
++	s = ((efi_start_image_fn)BS->start_image)(handle, NULL, NULL);
++	print("linux: the kernel returned %x\n", s);
++	return 1;
++}
++
+ static int
+ run_kernel(int have_checkpoint, uint64_t checkpoint)
+ {
+@@ -2830,7 +2895,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
+ 	uint32_t desc_ver;
+ 	struct payload_info pi;
+ 
+-	if (!parse_payload(&pi, 1) || pi.kernel == NULL) {
++	if (!parse_payload(&pi, 1)) {
++		return 0;
++	}
++	if (pi.linux_image != NULL) {
++		return boot_linux(&pi);
++	}
++	if (pi.kernel == NULL) {
+ 		print("no kernel in payload\n");
+ 		return 0;
+ 	}

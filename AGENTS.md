@@ -35,8 +35,8 @@ SM7250, boot bằng RAM qua Mu-Silicium UEFI).
 patches/linux/series        thứ tự patch
 patches/linux/vendor/       avicii (nguyên bản)
 patches/linux/picasso/      delta của picasso
+patches/loader/             delta nhỏ lên xnuloader (nhánh boot Image)
 configs/linux/              fragment Kconfig
-tools/linux/                đóng gói boot image, initramfs, log capture
-uefi/linuxloader/           EDK2 app linux.efi
+tools/linux/                ramdisk, đóng gói boot image
 build/                      cây build cô lập + build/out
 ```

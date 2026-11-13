@@ -199,14 +199,14 @@ upstream/linux/                     # clone torvalds/linux @ v7.3-rc7 (read-only
 upstream/avicii-mainline/           # clone tham chiếu (read-only, gitignored)
 patches/linux/UPSTREAM              # pin: linux v7.3-rc7 + avicii commit
 patches/linux/series                # vendor/01..14, rồi picasso/0001..
-patches/linux/vendor/01..14.patch   # nguyên bản avicii (GPL-2.0, giữ header)
+patches/linux/vendor/               # nguyên bản avicii (GPL-2.0, giữ header)
 patches/linux/picasso/0001..N.patch # delta của picasso
+patches/loader/                     # patch nhỏ lên xnuloader (thêm nhánh boot Image)
 configs/linux/base.config           # arm64 defconfig + EFI/simpledrm/initramfs
 configs/linux/picasso.config        # UFS, USB, PMIC, drm/msm, ath10k...
-uefi/linuxloader/                   # EDK2 app nguồn (build trong cây Mu-Silicium)
-tools/linux/build-bootimg.py        # BootShim + FD + XNUP{linux.efi,Image,initrd,dtb}
-tools/linux/mkinitramfs.sh          # busybox initramfs (NCM+ACM console)
-tools/linux/boot.sh                 # fastboot boot + chờ USB + log
+tools/linux/build-bootimg.py        # XNUP{linux.efi,Image,initrd,dtb} + boot image
+tools/linux/mkinitramfs.sh          # ramdisk: init tĩnh (in máy, tự reboot nếu được yêu cầu)
+tools/linux/init.c                  # /init của ramdisk
 ```
 
 ### 3.2 Series patch
@@ -313,21 +313,20 @@ và để cô lập lỗi.
 
 ### P1 — Boot vehicle
 
-1. `uefi/linuxloader/`: EDK2 app `linux.efi` (~300 dòng + fastboot):
-   - đọc `XNU_PAYLOAD_HEADER` tại `0xF0000000`, tìm entry `Image`, `dtb`, `initrd` (ramdisk bắt
-     buộc; không có initramfs built-in);
-   - copy DTB vào `AllocatePool` (để stub `fdt_open_into` được), ghi
-     `/chosen/linux,initrd-start|end`, `/chosen/bootargs`;
-   - `gBS->InstallConfigurationTable(&gFdtTableGuid, dtb)`;
-   - `LoadImage(FALSE, gImageHandle, NULL, ImageData, Size, &h)`, `StartImage(h, …)`;
-   - in tiến trình ra GOP (để phân biệt "loader chạy" vs "kernel chết");
-   - **fastboot listener** (tái dùng code `xnuloader`): `stage` nhận `Image`/`initrd`, `oem
-     ramdisk` đánh dấu blob kế tiếp là initrd, `oem run` nạp lại kernel + ramdisk đã stage.
-     Đây là đường iterate chính, giống `xnuloader` của XNU.
-   Build chung cây Mu-Silicium (`build_uefi.py -d picasso`), output `linux.efi`.
+1. `patches/loader/0001-xnuloader-boot-mainline-linux-image.patch`: thêm nhánh Linux vào
+   `xnuloader` (freestanding UEFI app, clang-15 + lld-link):
+   - parse payload: entry `Image`, `initrd`, `dtb`;
+   - cài DTB vào EFI configuration table (`DEVICE_TREE_GUID`), ramdisk đọc từ
+     `/chosen/linux,initrd-*` do packer ghi sẵn;
+   - `gBS->LoadImage` + `StartImage` trên `Image`;
+   - in tiến trình ra GOP ("== LINUX Image ... ==") để phân biệt loader chạy vs kernel chết;
+   - giữ nguyên toàn bộ fastboot listener sẵn có (`stage`, `oem run`) — nhờ vậy vòng iterate
+     dùng lại đúng giao thức của XNU, không phải viết USB stack mới.
+   Build: `./build.sh loader` → `build/out/linux.efi` (cần `IDENTITY_H` cho upstream).
 2. `tools/linux/build-bootimg.py`: `gzip(BootShim + FD + XNUP{loader.efi=linux.efi, Image,
    initrd.cpio.gz, picasso.dtb}) + UEFI dtb` (dtb section vẫn là `picasso.dtb` của UEFI, không
-   phải DTB mainline). Initrd là cpio.gz busybox, < 12 MiB để vừa ngân sách 64 MiB.
+   phải DTB mainline). Initrd là cpio.gz với init tĩnh, hiện ~0.3 MiB, phải < 12 MiB để vừa
+   ngân sách 64 MiB.
 3. cmdline M1: `console=tty0 earlycon=msm_geni_serial,0x4a90000 loglevel=8 ignore_loglevel
    printk.time=1 panic=10 clk_ignore_unused pd_ignore_unused regulator_ignore_unused`.
    Downstream chứng minh `earlycon=msm_geni_serial,0x4a90000` chạy được trên máy này và
@@ -347,16 +346,17 @@ và để cô lập lỗi.
 # một lần: từ stock bootloader
 fastboot boot build/out/boot-linux.img
 
-# mỗi lần sửa kernel/initrd: không upload lại UEFI
-fastboot stage build/out/Image
-fastboot oem ramdisk && fastboot stage build/out/initrd.cpio.gz
+# mỗi lần sửa kernel/initrd/dtb: repack rồi stage cả payload, không upload lại UEFI
+./tools/linux/build-bootimg.py ... --payload-out build/out/payload-linux.bin
+fastboot stage build/out/payload-linux.bin
 fastboot oem run
 ```
 
-Trong Linux, `reboot` (initramfs script) đưa máy về lại loader để `stage`/`oem run` tiếp —
-cùng mô hình với `xnuloader`/XNU userland. Nếu kernel panic trước khi kịp stage, quay lại
-`fastboot boot` từ bootloader (RAM-only). Khi đã có USB network (M2), thêm `kexec` để thay
-kernel ngay trong Linux mà không cần reset firmware.
+Payload staged là một XNUP đầy đủ (`linux.efi` + `Image` + `initrd` + `dtb`) nên chỉ một lần
+`stage` cho mỗi vòng. Trong Linux, `reboot` (hoặc `auto_reboot=<giây>` trong cmdline của init)
+đưa máy về loader để stage tiếp — cùng mô hình `xnuloader`/XNU userland. Nếu kernel panic trước
+khi kịp stage, quay lại `fastboot boot` từ bootloader (RAM-only). Khi có USB network (M2), thêm
+`kexec` để thay kernel ngay trong Linux mà không cần reset firmware.
 
 ### P2 — initramfs + USB
 

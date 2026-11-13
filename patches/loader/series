@@ -1,0 +1,2 @@
+# Applied to upstream/hakios-xnu-kernel before building linux.efi.
+0001-xnuloader-boot-mainline-linux-image.patch

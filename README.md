@@ -38,9 +38,24 @@ build/                      isolated build tree and build/out artifacts
 
 ```sh
 ./build.sh linux                # Image + sm7250-xiaomi-picasso.dtb -> build/out/
+./build.sh loader               # linux.efi (patched XnuLoader) -> build/out/
 ./build.sh export-patches       # regenerate patches/linux/picasso/*.patch
 ./build.sh check                # apply series to a clean tree, run dtbs_check
 ```
+
+The ramdisk and the boot image are built by the tools, because they need HakiOS artifacts that
+are not vendored here:
+
+```sh
+./tools/linux/mkinitramfs.sh    # build/out/initrd.cpio.gz (static init, ~0.3 MB)
+
+UEFI_FD=<SILICIUM_UEFI.fd> BOOTSHIM=<BootShim.bin> UEFI_DTB=<picasso.dtb> \
+  ./build.sh bootimg            # build/out/boot-linux.img + payload-linux.bin
+```
+
+`payload-linux.bin` is the XNUP container for `fastboot stage`; the UEFI artifacts come from the
+existing HakiOS build tree (they are not part of this repository). `CMDLINE="..."` overrides
+`/chosen/bootargs`.
 
 `check` runs `dtbs_check` through a repo-local dtschema; set it up once with
 `./scripts/setup-dtschema.sh` (no root, gitignored venv). Without it, `check` applies and
@@ -56,15 +71,18 @@ Requires: `aarch64-linux-gnu-gcc`, `make`, `bison`, `flex`, `bc`, `libssl-dev`, 
 fastboot boot build/out/boot-linux.img
 
 # every kernel/initramfs change after that: no UEFI re-upload
-fastboot stage build/out/Image
-fastboot oem ramdisk && fastboot stage build/out/initrd.cpio.gz
+fastboot stage build/out/payload-linux.bin
 fastboot oem run
 ```
 
-The root filesystem is always a ramdisk in RAM (XNUP entry `initrd`, handed to the kernel via
-`/chosen/linux,initrd-*`); `linux.efi` stays resident with a fastboot listener, so a rebuild is
-staged and run without touching UFS — the same model as `xnuloader`/XNU userland. A `reboot`
-inside the initramfs returns to the loader.
+The staged blob is a complete XNUP payload (`linux.efi` + `Image` + `initrd` + `dtb`), so a
+rebuild is one `stage` and one `oem run`. The root filesystem is always the ramdisk in RAM
+(entry `initrd`, handed to the kernel via `/chosen/linux,initrd-*`); `linux.efi` is the patched
+XnuLoader, so the payload region and the USB command channel are the same ones XNU uses.
+
+To get back to the loader after Linux is up, `reboot` (or the init's `auto_reboot=<seconds>`
+kernel argument) warm-resets the phone; whether that lands in the loader depends on the boot
+path installed on the device — otherwise `fastboot boot` again.
 
 RAM only. If the phone has to be recovered, reboot to the stock bootloader; nothing on the
 device was modified.
