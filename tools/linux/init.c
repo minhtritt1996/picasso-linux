@@ -9,6 +9,9 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -205,6 +208,173 @@ static void paint_fb(void)
 		close(ur);
 	close(fd);
 	klog("picasso-init: fb0 painted %d x 64K\n", i);
+}
+
+/* create every parent directory of path (absolute) */
+static void mkdir_parents(const char *path)
+{
+	char tmp[256];
+	char *p;
+
+	snprintf(tmp, sizeof(tmp), "%s", path);
+	for (p = tmp + 1; *p; p++) {
+		if (*p != '/')
+			continue;
+		*p = 0;
+		mkdir(tmp, 0755);
+		*p = '/';
+	}
+	mkdir(tmp, 0755);
+}
+
+static int try_mount(const char *dev, const char *dir, const char *type)
+{
+	return mount(dev, dir, type, MS_RDONLY, NULL);
+}
+
+/* unbind+bind a platform device so probe runs again with firmware present */
+static void rebind(const char *drv, const char *dev)
+{
+	char path[256];
+	int fd;
+
+	snprintf(path, sizeof(path), "/sys/bus/platform/drivers/%s/unbind", drv);
+	fd = open(path, O_WRONLY);
+	if (fd >= 0) {
+		write(fd, dev, strlen(dev));
+		close(fd);
+	}
+	snprintf(path, sizeof(path), "/sys/bus/platform/drivers/%s/bind", drv);
+	fd = open(path, O_WRONLY);
+	if (fd < 0) {
+		klog("firmware: no bind for %s\n", dev);
+		return;
+	}
+	if (write(fd, dev, strlen(dev)) < 0)
+		klog("firmware: bind %s failed: %s\n", dev, strerror(errno));
+	else
+		klog("firmware: bound %s\n", dev);
+	close(fd);
+}
+
+/* log the first entries of a directory (bring-up aid) */
+static void list_dir(const char *dir)
+{
+	DIR *d = opendir(dir);
+	struct dirent *e;
+	int n = 0;
+
+	if (!d) {
+		klog("list %s: %s\n", dir, strerror(errno));
+		return;
+	}
+	while ((e = readdir(d)) != NULL && n < 12) {
+		if (e->d_name[0] == '.')
+			continue;
+		klog("list %s: %s\n", dir, e->d_name);
+		n++;
+	}
+	closedir(d);
+}
+
+/* list platform devices matching a substring */
+static void list_devices(const char *match)
+{
+	DIR *d = opendir("/sys/bus/platform/devices");
+	struct dirent *e;
+
+	if (!d)
+		return;
+	while ((e = readdir(d)) != NULL)
+		if (strstr(e->d_name, match))
+			klog("dev: %s\n", e->d_name);
+	closedir(d);
+}
+
+/* The firmware lives on the phone's own partitions; the remoteproc/wifi probes
+ * run before init mounts them, so bind the devices again afterwards. */
+static void mount_firmware(void)
+{
+	static const char pil[] = "/lib/firmware/qcom/sm7250/xiaomi/picasso";
+	char dev[64];
+
+	mkdir_parents(pil);
+	if (find_part("modem", dev, sizeof(dev)) == 0) {
+		if (try_mount(dev, pil, "ext4") == 0)
+			klog("firmware: modem %s ext4\n", dev);
+		else if (try_mount(dev, pil, "vfat") == 0)
+			klog("firmware: modem %s vfat\n", dev);
+		else
+			klog("firmware: modem %s mount failed: %s\n", dev, strerror(errno));
+	} else {
+		klog("firmware: no modem partition\n");
+	}
+
+	mkdir_parents("/vendor");
+	if (find_part("vendor", dev, sizeof(dev)) == 0) {
+		if (try_mount(dev, "/vendor", "erofs") == 0)
+			klog("firmware: vendor %s erofs\n", dev);
+		else if (try_mount(dev, "/vendor", "ext4") == 0)
+			klog("firmware: vendor %s ext4\n", dev);
+		else
+			klog("firmware: vendor %s mount failed: %s\n", dev, strerror(errno));
+		mkdir_parents("/lib/firmware/vendor");
+		if (mount("/vendor/firmware", "/lib/firmware/vendor", NULL, MS_BIND, NULL) == 0)
+			klog("firmware: vendor bound\n");
+		list_dir("/vendor");
+	} else {
+		klog("firmware: no vendor partition\n");
+	}
+
+	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso");
+	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso/image");
+	list_devices("remoteproc");
+	list_devices("wifi");
+	rebind("qcom_q6v5_pas", "4080000.remoteproc");
+	rebind("ath10k_snoc", "18800000.wifi");
+	/* start the modem so PAS authenticates the firmware */
+	{
+		int fd = open("/sys/class/remoteproc/remoteproc0/state", O_WRONLY);
+		static const char *const fw[] = {
+			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/modem.mdt",
+			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/bdwlan.bin",
+			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/bdwlan.b19",
+			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/wlanmdsp.mbn",
+			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/crbtfw32.tlv",
+		};
+		int j;
+
+		for (j = 0; j < (int)ARRAY_SIZE(fw); j++)
+			klog("firmware: %s %s\n", fw[j], access(fw[j], R_OK) == 0 ? "present" : "missing");
+		if (fd >= 0) {
+			if (write(fd, "start", 5) < 0)
+				klog("remoteproc0 start: %s\n", strerror(errno));
+			else
+				klog("remoteproc0 start written\n");
+			close(fd);
+		}
+	}
+
+	if (fork() == 0) {
+		static const char *const f[] = {
+			"/sys/class/remoteproc/remoteproc0/state",
+			"/sys/class/remoteproc/remoteproc0/firmware",
+			"/sys/class/remoteproc/remoteproc0/name",
+		};
+		char buf[256];
+		int i, j;
+
+		for (i = 0; i < 120; i++) {
+			sleep(1);
+			if (i == 3 || i == 10 || i % 30 == 0) {
+				for (j = 0; j < (int)ARRAY_SIZE(f); j++)
+					if (read_file(f[j], buf, sizeof(buf)) > 0)
+						klog("state: %s = %s", f[j], buf);
+				list_dir("/sys/class/net");
+			}
+		}
+		_exit(0);
+	}
 }
 
 static void mount_userdata(void)
@@ -454,6 +624,7 @@ int main(void)
 	printf("%-14s %ld MiB\n", "memory", mem > 0 ? mem / 1024 : -1);
 	print_prop("/proc/device-tree/chosen/bootargs", "bootargs");
 	mount_userdata();
+	mount_firmware();
 	printf("==========================================\n");
 	dump_pstore();
 	paint_fb();
