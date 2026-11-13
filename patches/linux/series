@@ -20,3 +20,4 @@ picasso/0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch
 picasso/0003-printk-ram-console.patch
 picasso/0004-base-dd-probe-trace.patch
 picasso/0005-pinctrl-msm-skip-unmapped-tiles.patch
+picasso/0006-drm-panel-xiaomi-g7a.patch

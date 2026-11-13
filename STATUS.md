@@ -40,7 +40,10 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   some QUP) are unavailable until the correct bases/clocks are found.
 - `arm-smmu 3da0000` (Adreno SMMU) fails with -110 at ~10.7 s; harmless so far,
   GPU needs it later.
-- Display is simpledrm only (no DSI/panel driver yet); touch, Wi-Fi not started.
+- The g7a panel driver sends the downstream init sequence and the DPU/DSI
+  pipeline is up (`msmdrmfb`), but the panel output still needs a visual check
+  (brightness control goes through DCS 0x51; the WLED backlight driver is not
+  wired yet). Touch and Wi-Fi are not started.
 - `userdata` is mounted read-only (f2fs). Writing a log file there needs a
   read-write mount; the console/RAM log already survives resets, so that is a
   separate decision.
@@ -56,3 +59,4 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
 | log persistence | `get_staged` shows `== previous kernel console ==` after reset |
 | UFS | `ufshcd-qcom 1d84000.ufshc` probe 0; 6 LUNs, GPT partitions scanned (`sda1..sda35`, `sde1..sde62`) |
 | userdata | mounted **read-only**: `sda34` found by PARTNAME, `mount (f2fs, ro)`; klog: `userdata /dev/sda34 mounted read-only` |
+| display | MDSS/DPU 6.1.0 (`dpu hardware revision:0x60010000`), DSI + 7nm PHY, panel `panel-xiaomi-g7a` bound; `msmdrmfb` fb0 registered on minor 1 |
