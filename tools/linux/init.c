@@ -381,6 +381,7 @@ static void mount_firmware(void)
 		static const char *const progs[][6] = {
 			{ "/bin/rmtfs", "rmtfs", "-v", "-o", "/run/rmtfs", NULL },
 			{ "/bin/pd-mapper", "pd-mapper", NULL, NULL, NULL, NULL },
+			{ "/bin/tqftpserv", "tqftpserv", NULL, NULL, NULL, NULL },
 		};
 		int j;
 
