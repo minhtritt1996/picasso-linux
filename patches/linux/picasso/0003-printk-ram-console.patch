@@ -1,0 +1,119 @@
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+index 6d3d18a50..ca652df99 100644
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -52,8 +52,11 @@
+ 
+ #include <linux/uaccess.h>
+ #include <asm/sections.h>
++#include <asm/io.h>
+ 
+ #include <trace/events/initcall.h>
++
++static void ramlog_write(struct console *co, const char *s, unsigned int count);
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/printk.h>
+ 
+@@ -768,6 +771,8 @@ static ssize_t devkmsg_write(struct kiocb *iocb, struct iov_iter *from)
+ 		kfree(buf);
+ 		return -EFAULT;
+ 	}
++	/* bring-up: userland /dev/kmsg messages go to the RAM log as well */
++	ramlog_write(NULL, buf, len);
+ 
+ 	/*
+ 	 * Extract and skip the syslog prefix <[0-9]*>. Coming from userspace
+@@ -3152,6 +3157,16 @@ static bool console_emit_next_record(struct console *con, bool *handover, int co
+ 
+ 	/* Write everything out to the hardware. */
+ 
++	/* bring-up: copy each record to the RAM log once (see ramlog_write) */
++	{
++		static u64 ramlog_seq;
++
++		if (pmsg.seq != ramlog_seq) {
++			ramlog_seq = pmsg.seq;
++			ramlog_write(con, outbuf, pmsg.outbuf_len);
++		}
++	}
++
+ 	if (force_legacy_kthread() && !panic_in_progress()) {
+ 		/*
+ 		 * With forced threading this function is in a task context
+@@ -4385,12 +4400,76 @@ EXPORT_SYMBOL(console_force_preferred_locked);
+  * Just do some early initializations, and do the complex setup
+  * later.
+  */
++/*
++ * Bring-up aid: mirror the console into a fixed 1 MiB RAM window
++ * (0xF3F00000, reserved by the board DTS) so that the log survives the reset
++ * that follows a hang. The loader reads it back with "oem ramoops".
++ */
++#define RAMLOG_PHYS	0xF3F00000UL
++#define RAMLOG_DATA	0x1000U
++#define RAMLOG_SIZE	0x100000U
++#define RAMLOG_MAGIC	0x474F4C52U	/* "RLOG" */
++
++struct ramlog_hdr {
++	u32 magic;
++	u32 pos;
++	u32 total;
++	u32 reserved;
++};
++
++static void
++ramlog_write(struct console *co, const char *s, unsigned int count)
++{
++	struct ramlog_hdr *h = (struct ramlog_hdr *)__va(RAMLOG_PHYS);
++	char *data = (char *)h + RAMLOG_DATA;
++	unsigned int room = RAMLOG_SIZE - RAMLOG_DATA;
++	unsigned int pos = h->pos;
++
++	if (h->magic != RAMLOG_MAGIC) {
++		h->magic = RAMLOG_MAGIC;
++		h->total = 0;
++		h->reserved = 0;
++		pos = 0;
++	}
++	if (pos >= room)
++		pos = 0;
++	while (count) {
++		unsigned int n = min(count, room - pos);
++
++		memcpy(data + pos, s, n);
++		pos = (pos + n) % room;
++		s += n;
++		count -= n;
++		h->total += n;
++	}
++	h->pos = pos;
++}
++
++static struct console ramlog_console = {
++	.name = "ramlog",
++	.write = ramlog_write,
++	.flags = CON_PRINTBUFFER,
++	.index = -1,
++};
++
+ void __init console_init(void)
+ {
+ 	int ret;
+ 	initcall_t call;
+ 	initcall_entry_t *ce;
+ 
++	/* keep a copy of the console log in RAM, including the lines printed so far */
++	register_console(&ramlog_console);
++	{
++		/* marker: proves that a write here survives to the next boot */
++		struct ramlog_hdr *h = (struct ramlog_hdr *)__va(RAMLOG_PHYS);
++
++		h->magic = RAMLOG_MAGIC;
++		h->pos = 0;
++		h->total = 0;
++		h->reserved = 0x12345678;
++	}
++
+ #ifdef CONFIG_NULL_TTY_DEFAULT_CONSOLE
+ 	if (!console_set_on_cmdline)
+ 		add_preferred_console("ttynull", 0, NULL);

@@ -75,6 +75,20 @@ fastboot stage build/out/payload-linux.bin
 fastboot oem run
 ```
 
+Once Linux is up it serves a USB CDC-ACM console (`ttyGS0`), independent of the
+loader:
+
+```sh
+stty -F /dev/ttyACM0 raw -echo
+printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
+# commands: help, uname, mem, cat FILE, reboot
+```
+
+`reboot` returns to the loader (the boot image is installed on the `boot` partition).
+The kernel also mirrors its console into RAM (`0xF3F00000`); the loader copies that
+into its log at start-up, so `fastboot get_staged` after any reset contains the last
+kernel boot (and `logdump` keeps it on UFS).
+
 The staged blob is a complete XNUP payload (`linux.efi` + `Image` + `initrd` + `dtb`), so a
 rebuild is one `stage` and one `oem run`. The root filesystem is always the ramdisk in RAM
 (entry `initrd`, handed to the kernel via `/chosen/linux,initrd-*`); `linux.efi` is the patched

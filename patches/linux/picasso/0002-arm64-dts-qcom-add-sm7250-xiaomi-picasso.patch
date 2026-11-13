@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..3287f3a9d
+index 000000000..e63c0e160
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,278 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -70,7 +70,7 @@ index 000000000..3287f3a9d
 +		 * ttyMSM0 never binds on this platform; tty0 (simpledrm) and
 +		 * the USB console are the useful outputs.
 +		 */
-+		bootargs = "console=tty0 loglevel=8 ignore_loglevel printk.time=1 panic=10 clk_ignore_unused pd_ignore_unused regulator_ignore_unused";
++		bootargs = "console=tty0 loglevel=8 ignore_loglevel initcall_debug printk.time=1 panic=0 clk_ignore_unused pd_ignore_unused regulator_ignore_unused";
 +	};
 +
 +	/*
@@ -221,8 +221,92 @@ index 000000000..3287f3a9d
 +		 * but not no-map, so the kernel never hands it out yet can read
 +		 * the ramdisk at the address in /chosen/linux,initrd-start.
 +		 */
++		/*
++		 * The last MiB of the payload window is the RAM console: the
++		 * kernel mirrors printk there and the loader reads it with
++		 * "oem ramoops" after a reset (kernel/printk/printk.c).
++		 */
 +		linux_payload_mem: linux-payload@f0000000 {
-+			reg = <0x0 0xf0000000 0x0 0x4000000>;
++			reg = <0x0 0xf0000000 0x0 0x3f00000>;
++		};
++
++		/* console mirror written by the kernel (kernel/printk/printk.c) */
++		ramlog_mem: ramlog@f3f00000 {
++			reg = <0x0 0xf3f00000 0x0 0x100000>;
 +		};
 +	};
++};
++
++
++/*
++ * Bring-up: the TLMM probe stalls on its first register read, so keep it off
++ * until that is understood (it is needed later for UFS reset and peripherals).
++ */
++&tlmm {
++	status = "disabled";
++};
++
++/*
++ * PM8150 rails used by the USB PHY. The bootloader leaves all of them on;
++ * Linux is the only RPMh voter on this boot, so they stay always-on until the
++ * consumers are known to be safe.
++ */
++&apps_rsc {
++	regulators-0 {
++		compatible = "qcom,pm8150-rpmh-regulators";
++		qcom,pmic-id = "a";
++
++		vreg_s4a_1p8: smps4 {
++			regulator-name = "vreg_s4a_1p8";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++
++		vreg_l2a_3p1: ldo2 {
++			regulator-name = "vreg_l2a_3p1";
++			regulator-min-microvolt = <3072000>;
++			regulator-max-microvolt = <3072000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++
++		vreg_l5a_0p88: ldo5 {
++			regulator-name = "vreg_l5a_0p88";
++			regulator-min-microvolt = <880000>;
++			regulator-max-microvolt = <880000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++
++		vreg_l12a_1p8: ldo12 {
++			regulator-name = "vreg_l12a_1p8";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++	};
++};
++
++/* USB 2.0 gadget: the console and the file channel during bring-up. */
++&usb_1 {
++	status = "okay";
++};
++
++&usb_1_dwc3 {
++	dr_mode = "peripheral";
++	maximum-speed = "high-speed";
++};
++
++&usb_1_hsphy {
++	vdda-pll-supply = <&vreg_l5a_0p88>;
++	vdda18-supply = <&vreg_l12a_1p8>;
++	vdda33-supply = <&vreg_l2a_3p1>;
++
++	status = "okay";
 +};

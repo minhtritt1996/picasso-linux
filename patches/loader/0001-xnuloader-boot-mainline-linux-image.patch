@@ -1,5 +1,5 @@
 diff --git a/xnuloader/loader.c b/xnuloader/loader.c
-index 422f9d3..2d7ba0e 100644
+index 422f9d3..41b11c5 100644
 --- a/xnuloader/loader.c
 +++ b/xnuloader/loader.c
 @@ -41,6 +41,18 @@ struct payload_entry { char name[16]; uint32_t size; uint32_t reserved; };
@@ -21,7 +21,27 @@ index 422f9d3..2d7ba0e 100644
  /* ------------------------------------------------------------------------ */
  /* XNU structures (pexpert/pexpert/arm64/boot.h, mach-o/loader.h)           */
  
-@@ -2567,6 +2579,13 @@ struct payload_info {
+@@ -588,6 +600,19 @@ static const struct platform platform_redwood = {
+ 	.small_cores = 0x0f,
+ };
+ 
++/*
++ * picasso: Redmi K30 5G, SM7250 (lito). Same GIC as redwood; the cores are 6 Cortex-A55
++ * (0-5) and 2 Cortex-A76 (6-7), numbered in MPIDR's second affinity field. Linux does not
++ * use this (its own DTB describes the SoC); it is here because the display branch below
++ * needs a platform for the phone's framebuffer. Kept in sync with the HakiOS XNU port.
++ */
++static const struct platform platform_picasso = {
++	.name = "picasso", .io_base = 0x00400000, .io_size = 0x3FC00000,
++	.gic_dist = 0x17A00000, .gic_redist = 0x17A60000, .uart = 0, .log_other_cpu = 1,
++	.cores = 8, .core_shift = 8,
++	.small_cores = 0x3f,
++};
++
+ /* ------------------------------------------------------------------------ */
+ 
+ static void
+@@ -2567,6 +2592,13 @@ struct payload_info {
  	uint32_t resident_size;
  	const char *kernel_version;     /* kernel.ver: the version of the kernel in this payload (tools/kernel-version.py) */
  	int usb_mode;
@@ -35,7 +55,7 @@ index 422f9d3..2d7ba0e 100644
  };
  
  static uint64_t
-@@ -2646,6 +2665,15 @@ parse_payload(struct payload_info *pi, int verbose)
+@@ -2646,6 +2678,15 @@ parse_payload(struct payload_info *pi, int verbose)
  			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
  		} else if (str_eq(e->name, "usb")) {
  			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
@@ -51,7 +71,7 @@ index 422f9d3..2d7ba0e 100644
  		}
  		p += sizeof(*e) + ((e->size + 15) & ~15u);
  	}
-@@ -2822,6 +2850,43 @@ choose_window(const struct payload_info *pi)
+@@ -2822,6 +2863,52 @@ choose_window(const struct payload_info *pi)
   */
  static int starts_with(const char *s, const char *prefix);
  
@@ -81,6 +101,14 @@ index 422f9d3..2d7ba0e 100644
 +		print("linux: install_configuration_table failed %x\n", s);
 +		return 0;
 +	}
++	/*
++	 * The bootloader arms the APSS watchdog (~30 s bite) and mainline only
++	 * takes it over when qcom_wdt probes. A panic before that resets the
++	 * phone and the reason is lost, so stop it before handing over. The
++	 * kernel restarts it itself once the driver is up.
++	 */
++	*(volatile uint32_t *)(0x17C10000ULL + 0x08) = 0;   /* WDT_EN (kpss layout) */
++	print("linux: APSS watchdog stopped\n");
 +	s = ((efi_load_image_fn)BS->load_image)(0, IMAGE, NULL, (void *)pi->linux_image, pi->linux_image_size, &handle);
 +	if (EFI_ERROR(s)) {
 +		print("linux: LoadImage failed %x\n", s);
@@ -89,13 +117,14 @@ index 422f9d3..2d7ba0e 100644
 +	print("linux: starting the kernel\n");
 +	s = ((efi_start_image_fn)BS->start_image)(handle, NULL, NULL);
 +	print("linux: the kernel returned %x\n", s);
++	BS->stall(30000000);            /* leave the message on the screen */
 +	return 1;
 +}
 +
  static int
  run_kernel(int have_checkpoint, uint64_t checkpoint)
  {
-@@ -2830,7 +2895,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
+@@ -2830,7 +2917,13 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
  	uint32_t desc_ver;
  	struct payload_info pi;
  
@@ -110,3 +139,71 @@ index 422f9d3..2d7ba0e 100644
  		print("no kernel in payload\n");
  		return 0;
  	}
+@@ -3940,6 +4033,11 @@ fb_command(char *cmd)
+ 			staged_data = (const char *)(uintptr_t)SCREEN.base;
+ 			staged_len = (uint64_t)SCREEN.stride * SCREEN.height;
+ 			fb_reply("OKAY", "");
++		} else if (starts_with(cmd, "oem ramoops")) {
++			/* stage the pstore/ramoops zone from the last boot (board DTS) */
++			staged_data = (const char *)(uintptr_t)0xF3F00000ULL;
++			staged_len = 0x100000;
++			fb_reply("OKAY", "");
+ 		} else if (starts_with(cmd, "oem recording")) {
+ 			/* stage what the kernel's display driver recorded (boot-arg rec_secs) */
+ 			if (recording_data == NULL) {
+@@ -4345,6 +4443,9 @@ efi_main(efi_handle image, efi_system_table *st)
+ 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
+ 		if (SCREEN.base == 0xE1000000ULL) {
+ 			PLAT = &platform_redwood;
++		} else if (SCREEN.base == 0xA0000000ULL) {
++			/* picasso's cont_splash_region (SM7250, Redmi K30 5G) */
++			PLAT = &platform_picasso;
+ 		} else {
+ 			ramfb_phone_screen();
+ 		}
+@@ -4356,14 +4457,40 @@ efi_main(efi_handle image, efi_system_table *st)
+ 	wdt_arm();
+ 
+ 	int have_payload = parse_payload(&pi, 0);
+-	if (have_payload && pi.usb_mode && usb_start()) {
+-		flush_log();
+-		usb_command_loop();
++	int usb_ready = 0;
++	print("payload: have=%d usb_mode=%d image=%x initrd=%x dtb=%x\n", (uint64_t)have_payload,
++	    (uint64_t)pi.usb_mode, (uint64_t)(unsigned long)pi.linux_image,
++	    (uint64_t)(unsigned long)pi.linux_initrd, (uint64_t)(unsigned long)pi.linux_dtb);
++	if (have_payload && pi.usb_mode) {
++		int usb_ok;
++
++		print("usb: starting\n");
++		usb_ok = usb_start();
++		print("usb: start %s\n", usb_ok ? "ok" : "FAILED");
++		if (usb_ok) {
++			usb_ready = 1;
++			flush_log();
++			usb_command_loop();
++		}
+ 	}
+ 
+-	/* One-shot mode: run the kernel that came with the image, then reset. */
++	/*
++	 * One-shot mode: run the kernel that came with the image. If it comes
++	 * back (the EFI stub returned instead of entering the kernel), stay in
++	 * the USB loop so the log and the error code can be read out; only a
++	 * kernel that never returns ends in the reset below.
++	 */
+ 	if (have_payload) {
+-		run_kernel(0, 0);
++		if (!run_kernel(0, 0)) {
++			print("loader: nothing started\n");
++		} else {
++			print("loader: the kernel came back; staying in the USB loop\n");
++			flush_log();
++			if (usb_ready) {
++				usb_command_loop();
++			}
++		}
++		BS->stall(30000000);
+ 	}
+ 	reboot();
+ 	return 0;

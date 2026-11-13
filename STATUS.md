@@ -2,34 +2,49 @@
 
 ## M0 — build from upstream: DONE
 
-| Item | Result |
+`./build.sh linux` / `loader` / `bootimg` build from `upstream/` + `patches/`:
+`Image` 53 MB (PE32+), `sm7250-xiaomi-picasso.dtb`, `linux.efi` (patched XnuLoader),
+`initrd.cpio.gz`, `payload-linux.bin` (XNUP), `boot-linux.img` (Android boot v1).
+
+## M1 — boot vehicle: DONE (verified on hardware)
+
+- `fastboot boot build/out/boot-linux.img` → Mu-Silicium → XnuLoader → Linux EFI stub.
+- Kernel boots to userspace (init banner), 8 CPUs, 5305 MiB RAM, simpledrm console.
+- Loader stays resident with its fastboot server (`stage` + `oem run`), `reboot`
+  from Linux returns to it (boot image installed on `boot`).
+- Kernel console is mirrored into RAM (`0xF3F00000`, 1 MiB reserved) and the loader
+  folds it into its log at start-up: readable with `fastboot get_staged` after a
+  reset, and persisted in the `logdump` partition.
+
+## M2 — USB console: DONE (verified on hardware)
+
+- dwc3 + qcom glue + HS PHY probe (`CONFIG_INTERCONNECT_QCOM_SM7250=y`,
+  PM8150 rails L2A/L5A/L12A, `dr_mode = "peripheral"`).
+- Init builds a CDC-ACM gadget and serves a console on `/dev/ttyGS0`:
+
+```sh
+stty -F /dev/ttyACM0 raw -echo
+printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
+```
+
+  Commands: `help`, `uname`, `mem`, `cat FILE`, `reboot`.
+- `reboot` (also `auto_reboot=<s>` on the cmdline) resets to the loader in ~10 s.
+
+## Known blockers
+
+- **TLMM probe stalls** on its first register read (pin 0, tile EAST @ `0xf900000`):
+  the kernel is left with `&tlmm { status = "disabled"; }` until this is understood.
+  Needed for UFS reset, touch and the peripheral pinmux.
+- `arm-smmu 3da0000` (Adreno SMMU) fails with -110 at ~10.7 s; harmless so far,
+  GPU needs it later.
+- Display is simpledrm only (no DSI/panel driver yet); touch, UFS, Wi-Fi not started.
+
+## Verified on hardware
+
+| What | Evidence |
 |---|---|
-| `upstream/linux` | v7.3-rc7, commit `24a19b9` (tag object `ec8bf82`), clean |
-| `upstream/avicii-mainline` | `7194447`, clean |
-| `./build.sh check` | 16 patches apply to a clean tree; DTB builds; 7 dtbs_check diagnostics, all from vendor-series bindings (smmu/wdt/mdss/dpu/videocc/dispcc), none from picasso nodes |
-| `./build.sh linux --clean` | `build/out/Image` 53 463 552 B (PE32+ `pei-aarch64-little`), `sm7250-xiaomi-picasso.dtb` ~55 KB |
-| kernel config | `EFI_STUB`, `DRM_SIMPLEDRM`, `SYSFB_SIMPLEFB`, `FRAMEBUFFER_CONSOLE`, `SM_GCC_7250`, `PINCTRL_SM7250`, `QCOM_RPMH`, `QCOM_WDT`, `USB_DWC3_QCOM` all `y` |
-
-## M1 — boot vehicle: code complete, not yet booted on hardware
-
-The root filesystem is always a ramdisk in RAM. `linux.efi` is the existing XnuLoader plus a
-72-line patch, so the payload window and the fastboot command channel are the same ones XNU
-uses; no new USB stack and no firmware change.
-
-| Piece | Result |
-|---|---|
-| `patches/loader/0001-xnuloader-boot-mainline-linux-image.patch` | adds `Image`/`initrd`/`dtb` payload entries, installs the DTB as an EFI configuration table, `LoadImage`+`StartImage` |
-| `./build.sh loader` | `build/out/linux.efi` 71 680 B, PE32+ AArch64 (clang-15 + lld-link-15) |
-| `tools/linux/mkinitramfs.sh` | `build/out/initrd.cpio.gz` 266 739 B (static init; prints model/cores/memory, optional `auto_reboot=`) |
-| `tools/linux/build-bootimg.py` | XNUP + outer boot image; verifies PE of loader/Image, patches `/chosen/linux,initrd-*`, writes `payload-linux.bin` for `fastboot stage` |
-| packed payload | 53 857 776 B of 66 060 288 available; `Image` @ `0xf0011838`, `initrd` @ `0xf330e250` (matches `/chosen`) |
-| packed boot image | `build/out/boot-linux.img` 17 973 248 B; gzip stream 55 955 104 B = BootShim 176 + FD 0x200000 + XNUP |
-
-Offline checks run on the packed image: gzip decompresses to exactly shim+FD+XNUP, XNUP magic
-and entry sizes match, `loader.efi` and `Image` are PE32+ machine `0xaa64`, and the DTB inside
-the payload carries `linux-payload@f0000000`, `/chosen/linux,initrd-start` and the bootargs.
-
-## Not verified
-
-No fastboot device was attached, so nothing has been booted on the phone yet. First hardware
-run is `fastboot boot build/out/boot-linux.img`.
+| kernel to init | panel banner, `Run /init as init process` |
+| USB gadget | host sees `1d6b:0104`, `/dev/ttyACM0` at t≈2-4 s |
+| console | `uname` → `Linux 7.3.0-rc7 ... aarch64`, `mem` → 5432852 kB |
+| console reboot | `reboot` → loader (`product: xnuloader`) in 10 s |
+| log persistence | `get_staged` shows `== previous kernel console ==` after reset |

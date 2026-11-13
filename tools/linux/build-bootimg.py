@@ -106,6 +106,9 @@ def main():
     ap.add_argument('--cmdline', default='', help='override /chosen/bootargs')
     ap.add_argument('--uefi-ramdisk', default='', help='ramdisk for the outer boot header (default: 5 zero bytes)')
     ap.add_argument('--payload-out', default='', help='also write the XNUP container here (for fastboot stage)')
+    ap.add_argument('--no-usb', action='store_true',
+                    help='do not add the "usb" entry: the loader boots the kernel immediately instead of '
+                         'starting its fastboot server')
     ap.add_argument('--kernel-offset', default='0x8000')
     args = ap.parse_args()
 
@@ -122,6 +125,10 @@ def main():
 
     blobs = [(name, open(path, 'rb').read()) for name, path in (
         ('loader.efi', args.loader), ('Image', args.image), ('initrd', args.initrd), ('dtb', args.dtb))]
+    if not args.no_usb:
+        # "usb" makes the loader stay resident and serve fastboot instead of
+        # booting at once: the xnuloader iteration channel.
+        blobs.append(('usb', b'1\0'))
 
     addrs, end = layout([(name, len(data)) for name, data in blobs])
     if end > PAYLOAD_MAX - PAYLOAD_RESERVED:
@@ -141,7 +148,8 @@ def main():
             ('Image', dict(blobs)['Image']),
             ('initrd', dict(blobs)['initrd']),
             ('dtb', patched_dtb),
-        ])
+            ('kernel.ver', b'picasso-mainline\0'),
+        ] + ([] if args.no_usb else [('usb', b'1\0')]))
         if len(payload) > PAYLOAD_MAX - PAYLOAD_RESERVED:
             die(f'payload is {len(payload)} bytes, limit is {PAYLOAD_MAX - PAYLOAD_RESERVED}')
         if args.payload_out:
@@ -174,6 +182,7 @@ def main():
         data = dict(blobs)[name] if name != 'dtb' else patched_dtb
         print(f'  {name:<10} {len(data):>10} bytes @ 0x{addrs[name]:x}')
     print(f'  initrd 0x{initrd_start:x}..0x{initrd_start + len(dict(blobs)["initrd"]):x} in /chosen')
+    print(f'  mode: {"fastboot listener (usb entry)" if not args.no_usb else "one-shot boot"}')
 
 
 if __name__ == '__main__':

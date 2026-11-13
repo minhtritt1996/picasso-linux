@@ -174,6 +174,8 @@ export_patches() {
 	[ -d "$WS/.git" ] || die "nothing to export: run ./build.sh linux first"
 	local p1="picasso/0001-arm64-dts-qcom-sm7250-move-board-reserved-memory.patch"
 	local p2="picasso/0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch"
+	local p3="picasso/0003-printk-ram-console.patch"
+	local p4="picasso/0004-base-dd-probe-trace.patch"
 	local t
 	git -C "$WS" add -N arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts 2>/dev/null || true
 	t=$(mktemp)
@@ -191,6 +193,16 @@ export_patches() {
 		Documentation/devicetree/bindings/arm/qcom.yaml > "$t"
 	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p2 (already applied/committed?)"; }
 	mv "$t" "$PATCHES/$p2"
+	echo "==> Exporting $p3"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- kernel/printk/printk.c > "$t"
+	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p3 (already applied/committed?)"; }
+	mv "$t" "$PATCHES/$p3"
+	echo "==> Exporting $p4"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/base/dd.c > "$t"
+	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p4 (already applied/committed?)"; }
+	mv "$t" "$PATCHES/$p4"
 	echo "    [OK] regenerated; run ./build.sh check"
 }
 

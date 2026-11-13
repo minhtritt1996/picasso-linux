@@ -1,0 +1,12 @@
+diff --git a/drivers/base/dd.c b/drivers/base/dd.c
+index f6525a7ee..a464f6df7 100644
+--- a/drivers/base/dd.c
++++ b/drivers/base/dd.c
+@@ -783,6 +783,7 @@ static int really_probe_debug(struct device *dev, const struct device_driver *dr
+ 	int ret;
+ 
+ 	calltime = ktime_get();
++	printk(KERN_DEBUG "probing %s with driver %s\n", dev_name(dev), drv->name);
+ 	ret = really_probe(dev, drv);
+ 	rettime = ktime_get();
+ 	/*
