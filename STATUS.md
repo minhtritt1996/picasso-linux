@@ -93,6 +93,26 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   the modem's dump (`CONFIG_QCOM_Q6V5_PAS` dump collection) or compare the
   sequence against Android's `rmtfs` (raw-partition mode).
 
+### TLMM (pinmux) — root cause of the silent BT/touch
+
+- `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at
+  `0xf100000`; `pinctrl-msm` then returns 0 for every pin whose group sits on an
+  unmapped tile (EAST: BT uart5 gpio38-41 + swctrl 73, touch reset 4/IRQ 5;
+  WEST: touch CS 9, panel TE 10). No error anywhere - this is why the WCN3990
+  never saw a muxed UART.
+- Hardware bisect (initcall_debug, step prints in `msm_pinctrl_probe`):
+  - single-tile window: probe reaches `enabled`, `gpio init ... chip added
+    ret 0`, and pinmux writes for gpio38-41/73 execute;
+  - two or three tiles mapped (south/west/east at 0xf100000/0xf500000/
+    0xf900000): the kernel dies **inside `devm_gpiochip_add_data`**, right after
+    "adding chip", before any pinmux write;
+  - a multi-tile boot with gpiochip init skipped survives 30 s and muxes the
+    EAST pins fine, so the east/west windows themselves are accessible;
+  - flat `0xf000000`, `wakeup-parent` removed, shifted offsets: all still die.
+- Next: instrument `of_gpiochip_add` / `gpiochip_add_irqchip` /
+  `gpiochip_setup_dev` to find the multi-tile gpiochip crash, then BT/touch
+  pinmux works.
+
 ### Bluetooth (WCN3990) — not started
 
 Vendor node: `qca,wcn3990`, `qca,bt-sw-ctrl-gpio = <&tlmm 73>`, supplies
