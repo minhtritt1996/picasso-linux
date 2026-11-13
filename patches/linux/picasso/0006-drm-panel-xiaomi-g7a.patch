@@ -68,10 +68,10 @@ index dd8198372..740570583 100644
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_LD9040) += panel-samsung-ld9040.o
 diff --git a/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c b/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c
 new file mode 100644
-index 000000000..2b3171b3d
+index 000000000..4f8055ae8
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,406 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Xiaomi Redmi K30 5G (picasso) DSI panel "xiaomi 37 02 0a" (g7a), 1080x2400
@@ -421,8 +421,10 @@ index 000000000..2b3171b3d
 +
 +	dsi->lanes = 4;
 +	dsi->format = MIPI_DSI_FMT_RGB888;
++	/* downstream: burst mode with h-sync pulse, clock lane kept in HS */
 +	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
-+			  MIPI_DSI_MODE_LPM | MIPI_DSI_MODE_DSC_ALL_SLICES_IN_PKT;
++			  MIPI_DSI_MODE_VIDEO_SYNC_PULSE | MIPI_DSI_MODE_LPM |
++			  MIPI_DSI_MODE_DSC_ALL_SLICES_IN_PKT;
 +
 +	/* DSC 1.1, 8 bpc -> 8 bpp, two 540x20 slices, block prediction */
 +	ctx->dsc.dsc_version_major = 1;
