@@ -149,6 +149,57 @@ static int cmdline_seconds(const char *key)
 	return p ? atoi(p + strlen(key)) : -1;
 }
 
+
+/* find the block device of a GPT partition by its PARTNAME */
+static int find_part(const char *name, char *dev, size_t devlen)
+{
+	DIR *d = opendir("/sys/class/block");
+	struct dirent *e;
+
+	if (!d)
+		return -1;
+	while ((e = readdir(d)) != NULL) {
+		char path[256], buf[1024];
+		char *p;
+
+		if (e->d_name[0] == '.')
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/block/%s/uevent", e->d_name);
+		if (read_file(path, buf, sizeof(buf)) <= 0)
+			continue;
+		p = strstr(buf, "PARTNAME=");
+		if (!p || strncmp(p + 9, name, strlen(name)) != 0 ||
+		    p[9 + strlen(name)] != '\n')
+			continue;
+		p = strstr(buf, "DEVNAME=");
+		if (!p)
+			break;
+		snprintf(dev, devlen, "/dev/%.*s", (int)strcspn(p + 8, "\n"), p + 8);
+		closedir(d);
+		return 0;
+	}
+	closedir(d);
+	return -1;
+}
+
+static void mount_userdata(void)
+{
+	char dev[64];
+
+	mkdir("/userdata", 0755);
+	if (find_part("userdata", dev, sizeof(dev)) < 0) {
+		printf("userdata: no partition named userdata\n");
+		return;
+	}
+	if (!mount(dev, "/userdata", "f2fs", MS_RDONLY, NULL) ||
+	    !mount(dev, "/userdata", "ext4", MS_RDONLY, NULL)) {
+		printf("userdata: %s mounted read-only\n", dev);
+		klog("picasso-init: userdata %s mounted read-only\n", dev);
+	} else {
+		printf("userdata: %s mount failed: %s\n", dev, strerror(errno));
+	}
+}
+
 static void dump_pstore(void)
 {
 	DIR *d;
@@ -253,7 +304,7 @@ static void cmd(int fd, char *line)
 		sync();
 		reboot(RB_AUTOBOOT);
 	} else if (!strcmp(line, "help")) {
-		dprintf(fd, "commands: reboot, help, uname, mem, cat FILE\n");
+		dprintf(fd, "commands: reboot, help, uname, mem, cat FILE, ls DIR\n");
 	} else if (!strcmp(line, "uname")) {
 		struct utsname u;
 
@@ -261,6 +312,17 @@ static void cmd(int fd, char *line)
 		dprintf(fd, "%s %s %s\n", u.sysname, u.release, u.machine);
 	} else if (!strcmp(line, "mem")) {
 		dprintf(fd, "MemTotal %ld kB\n", memtotal_kb());
+	} else if (!strncmp(line, "ls ", 3)) {
+		DIR *dd = opendir(line + 3);
+		struct dirent *de;
+
+		if (!dd) {
+			dprintf(fd, "ls: %s\n", strerror(errno));
+			return;
+		}
+		while ((de = readdir(dd)) != NULL)
+			dprintf(fd, "%s\n", de->d_name);
+		closedir(dd);
 	} else if (!strncmp(line, "cat ", 4)) {
 		int f = open(line + 4, O_RDONLY);
 
@@ -366,6 +428,7 @@ int main(void)
 	printf("%-14s %d\n", "cpus", cpus);
 	printf("%-14s %ld MiB\n", "memory", mem > 0 ? mem / 1024 : -1);
 	print_prop("/proc/device-tree/chosen/bootargs", "bootargs");
+	mount_userdata();
 	printf("==========================================\n");
 	dump_pstore();
 	fflush(NULL);
