@@ -257,6 +257,36 @@ static void rebind(const char *drv, const char *dev)
 	close(fd);
 }
 
+/* log the state of the rails the WCN3990 needs */
+static void scan_regulators(void)
+{
+	DIR *d = opendir("/sys/class/regulator");
+	struct dirent *e;
+
+	if (!d)
+		return;
+	while ((e = readdir(d)) != NULL) {
+		char base[256], path[300], name[64] = "", state[32] = "";
+
+		if (e->d_name[0] == '.')
+			continue;
+		snprintf(base, sizeof(base), "/sys/class/regulator/%s", e->d_name);
+		snprintf(path, sizeof(path), "%s/name", base);
+		if (read_file(path, name, sizeof(name)) <= 0)
+			continue;
+		name[strcspn(name, "\n")] = 0;
+		if (!strstr(name, "vreg_l2c") && !strstr(name, "vreg_l10c") &&
+		    !strstr(name, "vreg_s4a") && !strstr(name, "vreg_l14a"))
+			continue;
+		snprintf(path, sizeof(path), "%s/state", base);
+		if (read_file(path, state, sizeof(state)) <= 0)
+			state[0] = 0;
+		state[strcspn(state, "\n")] = 0;
+		klog("reg: %s %s\n", name, state);
+	}
+	closedir(d);
+}
+
 /* log every GPT partition name (find firmware partitions) */
 static void list_parts(void)
 {
@@ -496,6 +526,13 @@ static void mount_firmware(void)
 					if (read_file(f[j], buf, sizeof(buf)) > 0)
 						klog("state: %s = %s", f[j], buf);
 				list_dir("/sys/class/net");
+				scan_regulators();
+				{
+					char buf[4096];
+
+					if (read_file("/sys/kernel/debug/gpio", buf, sizeof(buf)) > 0)
+						klog("gpio: %s\n", buf);
+				}
 			}
 		}
 		_exit(0);
@@ -732,6 +769,8 @@ int main(void)
 	mount("devtmpfs", "/dev", "devtmpfs", 0, NULL);
 	mount("proc", "/proc", "proc", 0, NULL);
 	mount("sysfs", "/sys", "sysfs", 0, NULL);
+	mkdir("/sys/kernel/debug", 0755);
+	mount("debugfs", "/sys/kernel/debug", "debugfs", 0, NULL);
 	klog("picasso-init: main start\n");
 	mlog("main start\n");
 
