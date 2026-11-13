@@ -58,7 +58,54 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
     pending on hardware.
   - Enabling the PM8150L WLED driver with guessed properties turned the backlight
     off - leave it to the bootloader until the correct values are known.
-- Touch and Wi-Fi are not started.
+### Wi-Fi (WCN3990) — in progress
+
+- Board DTS: WLAN rails `l1a` 0.752 V, `l14a` 1.8 V, `l2c` 1.304 V, `l10c`/`l11c`
+  3.312 V; `&wifi` (ath10k_snoc) and `&mpss` enabled.
+- `CONFIG_REMOTEPROC`, `QCOM_RPROC_COMMON`, `QCOM_Q6V5_PAS`, `ATH10K_SNOC`,
+  `CFG80211`/`MAC80211`/`RFKILL` are **built in** (the RAM boot has no modules).
+  Tristate traps: `CFG80211` is capped at `m` while `RFKILL=m` (`depends on
+  RFKILL || !RFKILL`); `QCOM_Q6V5_MSS` needs `QCOM_SYSMON=n`/`RPMSG_QCOM_SMD=n`;
+  `qcom,sm7250-mpss-pas` is driven by `qcom_q6v5_pas`, not `qcom-q6v5-mss`.
+- There is **no `vendor` partition** (dynamic partitions), so init mounts the
+  **modem** partition (`/dev/sde48`, vfat) at
+  `/lib/firmware/qcom/sm7250/xiaomi/picasso`; it carries `image/` with
+  `modem.mdt`, `adsp.b*`, `wlanmdsp.mbn`, `bdwlan.bin` (verified present) but no
+  `crbtfw32.tlv`. Init rebinds `4080000.remoteproc` after the mount and writes
+  `start` to `remoteproc0/state`.
+- Result: `remoteproc0: Booting fw image .../modem.mdt`, `remote processor modem
+  is now up`, state `running`. After ~40 s: `dog_hal_common.c:180:DOG detects
+  stalled initialization` — the modem needs **rmtfs** (EFS) and **pd-mapper**
+  (PD map, the `modemr.jsn`/`adspr.jsn` files are in the image dir). Next:
+  cross-build `linux-msm/rmtfs` + `linux-msm/pd-mapper` (libqrtr, AF_QIPCRTR),
+  add `rmtfs_mem` reserved region (client-id 1, vmid 15), start them before
+  `remoteproc0/state`.
+
+### Bluetooth (WCN3990) — not started
+
+Vendor node: `qca,wcn3990`, `qca,bt-sw-ctrl-gpio = <&tlmm 73>`, supplies
+`pm8150_s4` (io), `l2c` (core), `l10c` (pa), `l14a` (xtal). Firmware
+`crbtfw32.tlv`/`crnv32.bin` is **not** on the modem partition; find it before
+wiring `hci_qca` (UART + `qca,bt-sw-ctrl`).
+
+### Touch (Novatek NT36672C, SPI) — not started
+
+Vendor: `spi@984000` = GENI SE wrapper1/SE1 (currently `i2c1` in our dtsi),
+5 MHz, reset `tlmm 4`, IRQ `tlmm 5` (flag 0x2001), `reset-tddi =
+pm8150l_gpios 3`, CS on `gpio 9`. Mainline `novatek-nvt-ts` is **i2c-only**
+(NT11205/NT36672A) and needs the vendor firmware
+`novatek_nt36672c_g7a_fw0{1,2,3}.bin`, so a SPI driver has to be written
+(reference: downstream `NVT-ts-spi` + `drivers/input/hakios.novatek.c`).
+
+### Audio — not started
+
+Vendor overlay: `wsa881x_0211..0214` (SoundWire speakers), `nxp,tfa98xx` on i2c
+(0x34), WCD938x codec. Mainline has `wcd938x`, `wsa881x`, `tfa9874` and
+`q6apm/q6prm`; the ADSP (`sm7250-adsp-pas`, firmware `adsp.b*` in the modem
+image dir) must come up first, which depends on the same rmtfs/pd-mapper stack
+as the modem.
+
+- Touch, Bluetooth and audio are not started.
 - `userdata` is mounted read-only (f2fs). Writing a log file there needs a
   read-write mount; the console/RAM log already survives resets, so that is a
   separate decision.
