@@ -40,12 +40,25 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   some QUP) are unavailable until the correct bases/clocks are found.
 - `arm-smmu 3da0000` (Adreno SMMU) fails with -110 at ~10.7 s; harmless so far,
   GPU needs it later.
-- The g7a panel driver sends the downstream init sequence and the DSC PPS; the
-  DPU/DSI pipeline is up (`msmdrmfb`) and the bootloader backlight stays on.
-  Panel content still needs verification; the DSI PLL logs a lock failure at
-  probe (`status=0`, likely the probe-time rate test). Enabling the PM8150L WLED
-  driver with guessed properties turned the backlight off - leave it to the
-  bootloader until the correct values are known. Touch and Wi-Fi are not started.
+- **Display: no kernel frame reaches the panel.** MDSS/DPU/DSI/PHY/panel all
+  probe, `msmdrmfb` gets fbcon (135x150), the DSI video engine runs
+  (`STATUS0 0x201b`, `VIDEO_MODE_ENGINE_BUSY=1`) with DSC enabled
+  (`VIDEO_COMPRESSION_MODE_CTRL 0x4380b01`, slices 2 x 540 chunk, 1080 B/pkt,
+  pkt/line 1), the panel takes init + PPS + 0x11(70 ms)+0x29. Screen stays on the
+  loader splash: the vendor panel node sets `qcom,bl-update-flag =
+  "delay_until_first_frame"`, so the logo means **no frame ever arrived** (not
+  "stale LCD"). Signals that mislead: DSI writes report success (fire-and-forget),
+  DCS read fails with -110 because the cmd engine is blocked by the video engine,
+  `DSI_IRQ_VIDEO_DONE` is never unmasked in video mode.
+  - Fixed `drm_dsc_config.pic_width/pic_height` (were 0 -> PPS said 0x0). Still black.
+  - Experiment switch in the panel driver: `G7A_NO_DSC 1` (uncompressed link,
+    120 Hz, 2.08 Gbps/lane; 60 Hz = 1.04 Gbps/lane also tried).
+  - `tools/linux/init.c` now paints `/dev/fb0` with `/dev/urandom` (2 s after
+    start): snow => scanout reaches the panel, logo => data path dead. Result
+    pending on hardware.
+  - Enabling the PM8150L WLED driver with guessed properties turned the backlight
+    off - leave it to the bootloader until the correct values are known.
+- Touch and Wi-Fi are not started.
 - `userdata` is mounted read-only (f2fs). Writing a log file there needs a
   read-write mount; the console/RAM log already survives resets, so that is a
   separate decision.

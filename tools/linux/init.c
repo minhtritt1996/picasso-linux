@@ -182,6 +182,31 @@ static int find_part(const char *name, char *dev, size_t devlen)
 	return -1;
 }
 
+/* Paint /dev/fb0 with noise: the panel must then show snow. If it keeps the
+ * bootloader splash instead, the DRM framebuffer is not being scanned out. */
+static void paint_fb(void)
+{
+	char buf[65536];
+	int fd, ur, i;
+
+	fd = open("/dev/fb0", O_WRONLY);
+	if (fd < 0) {
+		klog("fb0: open failed: %s\n", strerror(errno));
+		return;
+	}
+	ur = open("/dev/urandom", O_RDONLY);
+	for (i = 0; i < 240 && ur >= 0; i++) {
+		ssize_t n = read(ur, buf, sizeof(buf));
+
+		if (n <= 0 || write(fd, buf, n) != n)
+			break;
+	}
+	if (ur >= 0)
+		close(ur);
+	close(fd);
+	klog("picasso-init: fb0 painted %d x 64K\n", i);
+}
+
 static void mount_userdata(void)
 {
 	char dev[64];
@@ -431,6 +456,7 @@ int main(void)
 	mount_userdata();
 	printf("==========================================\n");
 	dump_pstore();
+	paint_fb();
 	fflush(NULL);
 	klog("picasso-init: after pstore\n");
 
