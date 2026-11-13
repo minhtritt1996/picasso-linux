@@ -78,9 +78,10 @@ Sự thật đọc từ code, không phải suy đoán:
   được giữ nguyên.
 - cmdline lấy từ `EFI_LOADED_IMAGE_PROTOCOL.LoadOptions` (UTF-16) — launcher truyền được, hoặc
   để trống và dùng `chosen/bootargs` trong DTB.
-- initrd: built-in (`CONFIG_INITRAMFS_SOURCE`) **hoặc** LoadFile2 với
-  `LINUX_EFI_INITRD_MEDIA_GUID`. M1 dùng built-in; M2+ dùng `chosen/linux,initrd-start/end` trỏ
-  vào payload window (đã reserved, không cần copy).
+- initrd: **luôn** là ramdisk trong payload RAM (`initrd.cpio.gz` trong XNUP), launcher ghi
+  `/chosen/linux,initrd-start|end`. Không dùng initramfs built-in: rootfs phải thay được mà
+  không build lại kernel, giống userland của XNU. (LoadFile2 `LINUX_EFI_INITRD_MEDIA_GUID` là
+  lựa chọn thay thế tương đương, không cần thiết.)
 - Console sớm: stub gọi `setup_primary_display()` / sysfb từ GOP → `simpledrm`/`simplefb` vẽ
   fbcon lên đúng framebuffer UEFI đang dùng. Không cần driver display để thấy log.
 - `Image` là PE32+ (`ImageBase = 0`, không relocation) → `LoadImage/StartImage` hợp lệ; đây là
@@ -167,10 +168,17 @@ provenance rõ ràng; delta picasso là patch riêng. DTS picasso **không viế
 giá trị từ cây downstream đã chạy thật (`~/droidian/kernel/.../vendor/qcom/`), đối chiếu
 `prebuilt/device-tree.dtb` khi cần.
 
-**D3 — `linux.efi` là một EDK2 app nhỏ, không phải bootloader đầy đủ.**
-Nhiệm vụ: đọc entry trong payload → cài config table DTB → set `chosen` → `LoadImage/StartImage`.
-Bản 2 (sau M2) thêm fastboot `stage`/`oem run` để iterate kernel mà không phải `fastboot boot`
-lại từ đầu; tái dùng code xnuloader đã có trong `upstream/hakios-xnu-kernel/xnuloader/`.
+**D3 — `linux.efi` là loader RAM-resident, không phải bootloader đầy đủ.**
+Nhiệm vụ: đọc `Image`/`initrd`/`dtb` từ payload → cài config table DTB → set `chosen` →
+`LoadImage/StartImage`. Đồng thời giữ **fastboot listener** như `xnuloader`: `fastboot stage
+Image`, `fastboot oem ramdisk` + `stage initrd.cpio.gz`, `fastboot oem run` để nạp lại kernel +
+ramdisk mà không phải upload lại UEFI. Tái dùng code fastboot của
+`upstream/hakios-xnu-kernel/xnuloader/`. Kernel + initrd luôn nằm trong RAM; không có rootfs
+trên UFS, không có initramfs built-in.
+
+**D3b — Vòng lặp thử nghiệm giống XNU:** build → `stage`/`oem run` (không reboot máy tính) →
+trong Linux `reboot` để quay lại loader. Trong initramfs có `kexec` (tuỳ chọn) để thay kernel
+mà không cần reset firmware. Không ghi UFS ở bất kỳ bước nào.
 
 **D4 — Logging: fbcon trước, USB sau, RAM marker là phương án cuối.**
 `simpledrm` cho log trên panel ngay M1; USB CDC-ACM ở M2. Nếu kernel chết trước USB: ghi
@@ -273,7 +281,7 @@ và để cô lập lỗi.
 
 | Mốc | Nội dung | Ước lượng | Exit criteria |
 |---|---|---|---|
-| P0/M0 | Vendor upstream + series + `build.sh linux` | 1–2 | Build sạch từ `upstream/`, `dtbs_check` pass cho DTS picasso |
+| P0/M0 | Vendor upstream + series + `build.sh linux` | 1–2 | Build sạch từ `upstream/`; `dtbs_check` chỉ còn diagnostics của binding vendor, không có lỗi phát sinh từ node picasso |
 | P1/M1 | `linux.efi` + boot image + kernel "hello" | 2–4 | `Linux version` trên panel; DT parse đúng (`/proc/device-tree` chưa có, nhưng log `OF:` liệt kê node) |
 | P2/M2 | initramfs + USB gadget + SMP | 3–6 | Shell USB, 8 CPU, log đọc bằng máy |
 | P3/M3 | UFS + PMIC/regulator + cpufreq/thermal | 3–5 | Enumerate UFS, mount `userdata` ro, `nproc`/`cpufreq` ổn định |
@@ -305,17 +313,21 @@ và để cô lập lỗi.
 
 ### P1 — Boot vehicle
 
-1. `uefi/linuxloader/`: EDK2 app `linux.efi` (~300 dòng):
-   - đọc `XNU_PAYLOAD_HEADER` tại `0xF0000000`, tìm entry `Image`, `dtb`, `initrd`;
+1. `uefi/linuxloader/`: EDK2 app `linux.efi` (~300 dòng + fastboot):
+   - đọc `XNU_PAYLOAD_HEADER` tại `0xF0000000`, tìm entry `Image`, `dtb`, `initrd` (ramdisk bắt
+     buộc; không có initramfs built-in);
    - copy DTB vào `AllocatePool` (để stub `fdt_open_into` được), ghi
      `/chosen/linux,initrd-start|end`, `/chosen/bootargs`;
    - `gBS->InstallConfigurationTable(&gFdtTableGuid, dtb)`;
    - `LoadImage(FALSE, gImageHandle, NULL, ImageData, Size, &h)`, `StartImage(h, …)`;
-   - in tiến trình ra GOP (để phân biệt "loader chạy" vs "kernel chết").
+   - in tiến trình ra GOP (để phân biệt "loader chạy" vs "kernel chết");
+   - **fastboot listener** (tái dùng code `xnuloader`): `stage` nhận `Image`/`initrd`, `oem
+     ramdisk` đánh dấu blob kế tiếp là initrd, `oem run` nạp lại kernel + ramdisk đã stage.
+     Đây là đường iterate chính, giống `xnuloader` của XNU.
    Build chung cây Mu-Silicium (`build_uefi.py -d picasso`), output `linux.efi`.
 2. `tools/linux/build-bootimg.py`: `gzip(BootShim + FD + XNUP{loader.efi=linux.efi, Image,
    initrd.cpio.gz, picasso.dtb}) + UEFI dtb` (dtb section vẫn là `picasso.dtb` của UEFI, không
-   phải DTB mainline).
+   phải DTB mainline). Initrd là cpio.gz busybox, < 12 MiB để vừa ngân sách 64 MiB.
 3. cmdline M1: `console=tty0 earlycon=msm_geni_serial,0x4a90000 loglevel=8 ignore_loglevel
    printk.time=1 panic=10 clk_ignore_unused pd_ignore_unused regulator_ignore_unused`.
    Downstream chứng minh `earlycon=msm_geni_serial,0x4a90000` chạy được trên máy này và
@@ -329,10 +341,28 @@ và để cô lập lỗi.
    load thủ công theo PE (đọc header, `AllocateAddress` tại `ImageBase`, copy section, gọi
    entry với `x0 = handle`, `x1 = system table`).
 
+### Vòng lặp thử nghiệm (ramdisk, giống XNU)
+
+```sh
+# một lần: từ stock bootloader
+fastboot boot build/out/boot-linux.img
+
+# mỗi lần sửa kernel/initrd: không upload lại UEFI
+fastboot stage build/out/Image
+fastboot oem ramdisk && fastboot stage build/out/initrd.cpio.gz
+fastboot oem run
+```
+
+Trong Linux, `reboot` (initramfs script) đưa máy về lại loader để `stage`/`oem run` tiếp —
+cùng mô hình với `xnuloader`/XNU userland. Nếu kernel panic trước khi kịp stage, quay lại
+`fastboot boot` từ bootloader (RAM-only). Khi đã có USB network (M2), thêm `kexec` để thay
+kernel ngay trong Linux mà không cần reset firmware.
+
 ### P2 — initramfs + USB
 
 1. `tools/linux/mkinitramfs.sh`: busybox + `init` tối giản in `uname -a`, `nproc`, mount
-   proc/sys/dev, bật gadget NCM+ACM giống `initramfs/init` của avicii, telnet/shell.
+   proc/sys/dev, bật gadget NCM+ACM giống `initramfs/init` của avicii, telnet/shell; thêm
+   `reboot` (đưa về loader) và, khi có USB network, `kexec` để thay kernel không cần reset.
 2. DTS: `usb@a600000` (dwc3), QMP PHY, SS PHY, `iommus` (stream ID từ vendor DT), `rpmhpd`,
    interconnect. Debug USB bằng cách so `dmesg` với log XNU đã có (`hakios.picasso_usb.c`).
 3. SMP: kiểm tra PSCI, `cpu-map`, `cluster idle` (avicii đã fix 2 commit về cái này).
@@ -411,7 +441,7 @@ và để cô lập lỗi.
 | Touch cần nạp firmware theo biến thể panel (`fw01/02/03`) | TB | Viết driver riêng, không dựa `novatek-nvt-ts`; test cả 3 biến thể |
 | Gauge PM7250B không có driver mainline (downstream dùng QGauge) | TB | Hiển thị áp/current qua ADC trước, driver gauge sau |
 | `earlycon@0x4a90000` không có pad ra ngoài | Thấp | Chỉ là kênh phụ; console chính vẫn là `tty0` + USB |
-| Kích thước boot image vượt giới hạn RAM-boot | Thấp | Payload ≤ 64 MB; Image ~25 MB + initrd ~8 MB |
+| Image 51 MB (đo trên bản M0) làm payload 64 MiB chật | TB | initramfs < ~12 MiB; hoặc `CONFIG_EFI_ZBOOT` (Image.gz PE) hay cắt config |
 | Patch avicii trôi khi upstream đổi | TB | Pin commit; `git apply --check` trong CI |
 
 ---

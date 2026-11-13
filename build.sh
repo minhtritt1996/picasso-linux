@@ -61,7 +61,7 @@ apply_series() {
 }
 
 prepare() {
-	mkdir -p "$BUILD" "$OUT" "$KB"
+	mkdir -p "$BUILD" "$OUT"
 	if [ ! -d "$WS/.git" ]; then
 		echo "==> Cloning upstream/linux into $WS"
 		git clone -q "$LINUX_UP" "$WS"
@@ -74,6 +74,7 @@ prepare() {
 	else
 		echo "==> Reusing existing $WS (use --clean to rebuild from upstream)"
 	fi
+	mkdir -p "$KB"
 }
 
 configure() {
@@ -119,12 +120,13 @@ export_patches() {
 
 run_check() {
 	verify_upstream
-	local tmp rc=0 check_dtbs=1
+	local tmp rc=0 check_dtbs=1 log="$OUT/check.log" diags
+	mkdir -p "$OUT"
 	if [ -x "$ROOT/.venv-dtschema/bin/dt-doc-validate" ]; then
 		PATH="$ROOT/.venv-dtschema/bin:$PATH"
 	elif ! command -v dt-doc-validate >/dev/null; then
 		echo "    [WARN] dt-doc-validate not found: skipping dtbs_check"
-		echo "           python3 -m venv .venv-dtschema && .venv-dtschema/bin/pip install dtschema"
+		echo "           ./scripts/setup-dtschema.sh"
 		check_dtbs=0
 	fi
 	tmp=$(mktemp -d)
@@ -140,16 +142,22 @@ run_check() {
 		make -s O="$tmp/out" ARCH=arm64 CROSS_COMPILE="$CROSS" olddefconfig
 		make O="$tmp/out" ARCH=arm64 CROSS_COMPILE="$CROSS" -j"$JOBS" \
 			CHECK_DTBS="$check_dtbs" qcom/sm7250-xiaomi-picasso.dtb
-	) || rc=$?
+	) >"$log" 2>&1 || rc=$?
 	rm -rf "$tmp"
-	[ "$rc" -eq 0 ] || die "check failed"
-	echo "    [OK] series applies, DTS builds, dtbs_check clean"
+	[ "$rc" -eq 0 ] || { tail -20 "$log" >&2; die "check failed (log: $log)"; }
+	echo "    [OK] series applies to a clean tree and the DTB builds"
+	if [ "$check_dtbs" = 1 ]; then
+		diags=$(grep -c 'from schema \$id:' "$log" || true)
+		echo "    dtbs_check: ${diags:-0} schema diagnostics from the vendor series (detail: $log)"
+	fi
 }
 
 case "${1:-}" in
 	linux)
 		verify_upstream
-		[ "${2:-}" = "--clean" ] && rm -rf "$WS" "$KB"
+		if [ "${2:-}" = "--clean" ]; then
+			rm -rf "$WS" "$KB"
+		fi
 		build_kernel
 		;;
 	export-patches)

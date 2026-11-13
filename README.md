@@ -52,8 +52,19 @@ Requires: `aarch64-linux-gnu-gcc`, `make`, `bison`, `flex`, `bc`, `libssl-dev`, 
 ## Boot
 
 ```sh
+# once, from the stock bootloader
 fastboot boot build/out/boot-linux.img
+
+# every kernel/initramfs change after that: no UEFI re-upload
+fastboot stage build/out/Image
+fastboot oem ramdisk && fastboot stage build/out/initrd.cpio.gz
+fastboot oem run
 ```
+
+The root filesystem is always a ramdisk in RAM (XNUP entry `initrd`, handed to the kernel via
+`/chosen/linux,initrd-*`); `linux.efi` stays resident with a fastboot listener, so a rebuild is
+staged and run without touching UFS — the same model as `xnuloader`/XNU userland. A `reboot`
+inside the initramfs returns to the loader.
 
 RAM only. If the phone has to be recovered, reboot to the stock bootloader; nothing on the
 device was modified.
