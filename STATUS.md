@@ -466,3 +466,30 @@ via /chosen, let the kernel treat that range as reserved through the initrd
 properties); (2) build with `CONFIG_EFI_DEBUG` so the stub's own messages appear;
 (3) compare with the XNU path, which uses the same resident image but ignores
 the EFI map entirely.
+
+### Resident ramdisk for Linux — WORKS (2026-11-14)
+
+```
+fastboot oem ramdisk
+fastboot stage build/out/initrd.cpio.gz      # resident image, up to ~1.1 GiB
+fastboot stage build/out/payload-linux.bin   # built with PAYLOAD_NO_INITRD=1
+fastboot oem run
+```
+→ `dmesg`: `Freeing initrd memory: 1592K`, console up, `uname` answers. The payload
+carries no initrd at all; the loader rewrote `/chosen/linux,initrd-start|end`
+with `win_base + 0x08000000` and the staged size.
+
+The bug that took three flashes: `choose_window()` claimed the **largest free
+block (~5 GiB, capped at MAX_MEM_SIZE)** for every payload, which is right for
+XNU (whose kernel gets copied into that window) but starves UEFI on the Linux
+path — `LoadImage` still succeeded, yet the kernel reset the phone in under a
+second, before printing anything (breadcrumb stopped at `0x1005`, empty
+ramoops). For Linux payloads the window is now capped at **2 GiB**
+(`RESIDENT_RD_OFFSET` 128 MiB + `RESIDENT_RD_RESERVE` 768 MiB + ~1.1 GiB of
+resident image), leaving ~3 GiB to the firmware and the kernel.
+
+Debug tools that made this findable, all loader-side:
+`fastboot getvar result` → `linux-fail N` (numbered bail points), a
+reset-surviving breadcrumb word at `0xF3FF0000` printed at loader start,
+`fastboot oem ramoops` (the kernel's RAM console) and `fastboot oem screenshot`
+(raw framebuffer; `getvar screen` = `1080 2400 4320`, BGRA).
