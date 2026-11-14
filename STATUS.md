@@ -581,3 +581,28 @@ the Fedora userspace is reachable over the same USB cable (1d6b:0104).
   the DPU prints `dpu_crtc_atomic_flush: crtc73 pending 0x1` on fast commits —
   a benign warning from the port's flush-bit handling (fb0 still registers and
   scans out).
+
+### The three open items, closed (2026-11-14)
+
+1. **Firmware partitions.** `fw-setup.service` now waits for
+   `/dev/disk/by-partlabel/modem` (udev is asynchronous — without the wait the
+   mounts silently failed and every remoteproc kept `-2`), mounts `modem`,
+   `dsp` and `bluetooth` read-only, links 327 `image/*` files into
+   `/lib/firmware/qcom/sm7250/xiaomi/picasso/image`, then unbinds/binds
+   `qcom_q6v5_pas`. Result on the phone: `adsp is now up` **and**
+   `modem is now up` in the same boot.
+2. **DPU `crtc73 pending 0x1`.** Confirmed benign for the port: it is a warning
+   from `dpu_crtc_atomic_flush` when commits arrive faster than the flush bit
+   clears; `DSI-1`/crtc 73 still scan out (`kmscube` renders, weston enables
+   the mode). No change made.
+3. **Graphical session.** `weston.service` (`PAMName=login`, DRM backend) comes
+   up: `Output 'DSI-1' (crtc 73) video modes` → `Output 'DSI-1' enabled with
+   head(s) DSI-1`, inputs (pwrkey/resin/gpio-keys/NT36672C) associated, a
+   logind session exists, and a Wayland client (`weston-terminal`) runs on it.
+   Two facts learned the hard way: libseat needs a **logind session**
+   (`PAMName=login` on the unit; `systemd-run --scope` rejects `PAMName`), and
+   the rootfs needs `/etc/pam.d/system-auth` + `postlogin` with
+   `pam_systemd.so` — the `tsflags=noscripts` build has none, and without them
+   even the session-open fails. Weston 15 dropped `--tty`.
+   GPU is hardware: `renderer: FD620`, `kmscube` at ~10.7 fps once
+   `prebuilt/fw-gpu/*` (a650 GMU/SQE, a620 zap) is in `/lib/firmware/qcom`.
