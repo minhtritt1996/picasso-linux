@@ -153,6 +153,19 @@ static int cmdline_seconds(const char *key)
 }
 
 
+/* true when the kernel cmdline contains the given token */
+static int cmdline_flag(const char *flag)
+{
+	static char buf[1024];
+	size_t n = strlen(flag);
+
+	if (read_file("/proc/cmdline", buf, sizeof(buf)) <= 0)
+		return 0;
+	return strstr(buf, flag) && (strstr(buf, flag)[n] == ' ' ||
+				     strstr(buf, flag)[n] == '\n' ||
+				     strstr(buf, flag)[n] == 0);
+}
+
 /* find the block device of a GPT partition by its PARTNAME */
 static int find_part(const char *name, char *dev, size_t devlen)
 {
@@ -829,7 +842,10 @@ int main(void)
 	printf("%-14s %ld MiB\n", "memory", mem > 0 ? mem / 1024 : -1);
 	print_prop("/proc/device-tree/chosen/bootargs", "bootargs");
 	mount_userdata();
-	mount_firmware();
+	if (cmdline_flag("nomodem"))
+		klog("safe mode: modem/BT firmware services skipped\n");
+	else
+		mount_firmware();
 	printf("==========================================\n");
 	dump_pstore();
 	paint_fb();
