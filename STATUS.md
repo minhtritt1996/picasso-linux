@@ -563,3 +563,21 @@ the Fedora userspace is reachable over the same USB cable (1d6b:0104).
   `dmesg-<stamp>.log` and `cmdline-<stamp>.txt` to `/picasso-logs/` on the
   Android **cache** partition (ext4, 384 MB, 318 MB free — verified mounted rw,
   written, `sync`, unmounted), keeping the newest 20 boots.
+
+### Fedora: firmware for the DSPs and the GPU, and the first GL frame
+
+- Missing firmware was the last real blocker for the DSPs and the GPU:
+  `Direct firmware load for qcom/sm7250/xiaomi/picasso/image/modem.mdt failed
+  with error -2`, `failed to load a650_sqe.fw` (so Mesa fell back to llvmpipe —
+  kmscube ran at 30 fps on 2 frames with software rendering).
+- `fw-setup.service` (`/usr/local/bin/fw-setup.sh`) mounts the Android `modem`,
+  `dsp` and `bluetooth` partitions read-only, links their `image/*` files into
+  `/lib/firmware/qcom/sm7250/xiaomi/picasso/image` (and `/lib/firmware/qca`),
+  then unbinds/rebinds `qcom_q6v5_pas` and `ath10k_snoc` so the second probe
+  finds them.
+- The GPU blobs from `prebuilt/fw-gpu/` (a620 zap split, a650 GMU/SQE) are now
+  copied into the rootfs `/lib/firmware/qcom`.
+- `kmscube -D /dev/dri/card1` runs (EGL/GBM on the DPU), `renderD128` present;
+  the DPU prints `dpu_crtc_atomic_flush: crtc73 pending 0x1` on fast commits —
+  a benign warning from the port's flush-bit handling (fb0 still registers and
+  scans out).
