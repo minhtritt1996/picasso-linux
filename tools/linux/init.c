@@ -1252,12 +1252,14 @@ static void cmd(int fd, char *line)
 				if (!(pfd[i].revents & POLLIN))
 					continue;
 				while (read(pfd[i].fd, &ev, sizeof(ev)) == sizeof(ev)) {
-					if (ev.type != EV_KEY)
-						continue;
-					dprintf(fd, "  event%d: code %u %s\n", i,
-						ev.code,
-						ev.value == 0 ? "up" :
-						ev.value == 1 ? "DOWN" : "repeat");
+					if (ev.type == EV_KEY)
+						dprintf(fd, "  event%d: key %u %s\n", i,
+							ev.code,
+							ev.value == 0 ? "up" :
+							ev.value == 1 ? "DOWN" : "repeat");
+					else if (ev.type == EV_ABS)
+						dprintf(fd, "  event%d: abs %u = %d\n",
+							i, ev.code, ev.value);
 				}
 			}
 		}

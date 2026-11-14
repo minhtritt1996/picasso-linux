@@ -390,3 +390,32 @@ was `=m`, and the RAM initramfs has no module loader — with it missing both
 children stayed unbound and no power/volume-down key ever appeared). Enabling
 `CONFIG_RTC_DRV_PM8XXX=y` instead hangs the boot before the console; that
 driver is not needed for the keys.
+
+### Touch (NT36672C over GENI SPI SE7) — communication works, reports do not
+
+What is proven on hardware (2026-11-14):
+
+- SE7 (0x984000) is the touch's SPI controller; its four pads are gpio6/7/8/9
+  (function `qup11`, 6 mA) and they are muxed by `picasso-pinmux.c`, because
+  the TLMM tiles those pins live in are not mapped by mainline pinctrl here.
+  Muxing only 6/7/8 is not enough: without gpio9 (CS) every read returned
+  `ff ff ff ff ff ff`.
+- With CS muxed the controller answers: id `0c 00 00 72 66 03`, which matches
+  the vendor trim-id table entry for the NT36675 memory map, i.e. the event
+  buffer at 0x22d00 (the 0x11a00 of the NT36672A map reads all zeros here).
+- Reset (tlmm 4) and interrupt (tlmm 5) are on TLMM pins the pinctrl driver does
+  not map; the early mux drives reset low then high and the driver polls instead
+  of using the interrupt line.
+- `nvt_bootloader_reset` (0x5a to 0x7fff80) and disabling the "read fast" path
+  (0 to 0x3f310) are implemented as the vendor does.
+
+Not working yet: no report with a valid finger slot is ever seen — the reader
+scans the four candidate event buffers and never scores one, so the controller
+is not producing touch reports. Next things to check, in order: the vendor's
+`nvt_read_fw_info`/fw-status handshake (the controller may still be in its
+bootloader after our reset, not in its flash firmware), the interrupt pad's
+pull configuration (vendor uses bias-pull-down), and whether this panel needs
+its firmware re-flashed (the vendor driver carries nt36672c_g7a_fw0X.bin).
+
+Driver: `drivers/input/touchscreen/picasso-nvt-spi.c`, enabled with
+`CONFIG_TOUCHSCREEN_PICASSO_NVT=y`.
