@@ -217,6 +217,20 @@ export_patches() {
 		Documentation/devicetree/bindings/display/panel/xiaomi,g7a-37-02-0a.yaml > "$t"
 	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p6 (already applied/committed?)"; }
 	mv "$t" "$PATCHES/$p6"
+	local p7="picasso/0007-picasso-bringup-pinmux-audio-gpu.patch"
+	echo "==> Exporting $p7"
+	git -C "$WS" add -N drivers/soc/qcom/picasso-pinmux.c 2>/dev/null || true
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- \
+		drivers/soc/qcom/picasso-pinmux.c drivers/soc/qcom/Makefile \
+		sound/soc/qcom/qdsp6/q6asm-dai.c sound/core/pcm_native.c \
+		sound/soc/soc-pcm.c sound/soc/qcom/Kconfig > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$p7"
+	else
+		rm -f "$t"
+		echo "    (no bring-up delta to export)"
+	fi
 	echo "    [OK] regenerated; run ./build.sh check"
 }
 

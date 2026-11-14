@@ -1,5 +1,5 @@
 diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
-index 6d3d18a50..ca652df99 100644
+index 6d3d18a50..5ef1634ad 100644
 --- a/kernel/printk/printk.c
 +++ b/kernel/printk/printk.c
 @@ -52,8 +52,11 @@
@@ -117,3 +117,23 @@ index 6d3d18a50..ca652df99 100644
  #ifdef CONFIG_NULL_TTY_DEFAULT_CONSOLE
  	if (!console_set_on_cmdline)
  		add_preferred_console("ttynull", 0, NULL);
+@@ -5186,3 +5265,19 @@ void __printk_cpu_sync_put(void)
+ }
+ EXPORT_SYMBOL(__printk_cpu_sync_put);
+ #endif /* CONFIG_SMP */
++
++/* temporary bring-up probe: is the WEST TLMM window (pin 38 area) readable? */
++static int __init tlmm_probe_addr(void)
++{
++	void __iomem *w;
++	unsigned int v = 0;
++
++	w = ioremap(0x0f926000UL, 0x1000);
++	if (w)
++		v = readl(w);
++	pr_info("tlmm probe: east 0xf926000 = 0x%08x (%s)\n", v, w ? "mapped" : "no ioremap");
++	if (w)
++		iounmap(w);
++	return 0;
++}
++device_initcall(tlmm_probe_addr);

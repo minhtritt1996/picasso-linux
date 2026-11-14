@@ -1,0 +1,172 @@
+diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
+index 798643be3..8ccb9f5ab 100644
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -41,3 +41,4 @@ qcom_ice-objs			+= ice.o
+ obj-$(CONFIG_QCOM_INLINE_CRYPTO_ENGINE)	+= qcom_ice.o
+ obj-$(CONFIG_QCOM_PBS) +=	qcom-pbs.o
+ obj-$(CONFIG_QCOM_UBWC_CONFIG) += ubwc_config.o
++obj-y += picasso-pinmux.o
+diff --git a/drivers/soc/qcom/picasso-pinmux.c b/drivers/soc/qcom/picasso-pinmux.c
+new file mode 100644
+index 000000000..8dfebaec1
+--- /dev/null
++++ b/drivers/soc/qcom/picasso-pinmux.c
+@@ -0,0 +1,75 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Early pinmux for the Xiaomi Redmi K30 5G (picasso, SM7250).
++ *
++ * pinctrl-msm cannot be used for the EAST/WEST TLMM tiles on this port yet
++ * (the gpiochip registration dies when more than one tile window is mapped),
++ * so the few pads needed by Bluetooth (uart5, gpio38-41), the speaker amp
++ * (i2c8, gpio49/50) are muxed here before the GENI drivers probe.
++ *
++ * Registers follow the vendor layout: pin N ctl at 0xf000000 + tile + 0x1000*N
++ * with SOUTH 0x100000, WEST 0x500000, EAST 0x900000.
++ */
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/moduleparam.h>
++#include <linux/string.h>
++
++#define TLMM_BASE		0x0f000000UL
++#define TLMM_SIZE		0x1000000UL
++#define TLMM_TILE_EAST		0x00900000UL
++#define TLMM_TILE_WEST		0x00500000UL
++#define REG_SIZE		0x1000UL
++
++#define MUX_MASK		(0xfU << 2)
++#define DRV_MASK		(0x7U << 6)
++
++static void __iomem *tlmm;
++
++static bool do_write;
++
++static void picasso_mux(unsigned int pin, unsigned int tile, unsigned int func,
++			unsigned int drv)
++{
++	void __iomem *ctl = tlmm + tile + REG_SIZE * pin;
++	u32 v;
++
++	if (!tlmm)
++		return;
++	v = readl(ctl);
++	pr_info("picasso-pinmux: pin %u tile %x func %u: ctl=%08x\n", pin, tile, func, v);
++	if (!do_write)
++		return;
++	v &= ~(MUX_MASK | DRV_MASK);
++	v |= (func << 2) | (drv << 6);
++	writel(v, ctl);
++}
++
++static char picasso_pinmux_mode[8] = "read";
++module_param_string(mode, picasso_pinmux_mode, sizeof(picasso_pinmux_mode), 0444);
++MODULE_PARM_DESC(mode, "read (default) or write the mux registers");
++
++static int __init picasso_pinmux_init(void)
++{
++	do_write = !strcmp(picasso_pinmux_mode, "write");
++	tlmm = ioremap(TLMM_BASE, TLMM_SIZE);
++	if (!tlmm) {
++		pr_err("picasso-pinmux: cannot map TLMM\n");
++		return 0;
++	}
++
++	/* Bluetooth: 4-wire UART5 (qup05 = function 1, 2 mA) */
++	picasso_mux(38, TLMM_TILE_EAST, 1, 2);	/* CTS */
++	picasso_mux(39, TLMM_TILE_EAST, 1, 2);	/* RTS */
++	picasso_mux(40, TLMM_TILE_EAST, 1, 2);	/* TX  */
++	picasso_mux(41, TLMM_TILE_EAST, 1, 2);	/* RX  */
++
++	/* Speaker amp bus: i2c8 SDA/SCL (qup12 = function 2, 2 mA) */
++	picasso_mux(49, TLMM_TILE_WEST, 2, 2);
++	picasso_mux(50, TLMM_TILE_WEST, 2, 2);
++
++	pr_info("picasso-pinmux: uart5 + i2c8 pads muxed\n");
++	return 0;
++}
++subsys_initcall(picasso_pinmux_init);
+diff --git a/sound/core/pcm_native.c b/sound/core/pcm_native.c
+index 6d32c12fb..bdcdf4127 100644
+--- a/sound/core/pcm_native.c
++++ b/sound/core/pcm_native.c
+@@ -2813,6 +2813,7 @@ int snd_pcm_open_substream(struct snd_pcm *pcm, int stream,
+ 	int err;
+ 
+ 	err = snd_pcm_attach_substream(pcm, stream, file, &substream);
++	pr_info("pcm_open: attach -> %d\n", err);
+ 	if (err < 0)
+ 		return err;
+ 	if (substream->ref_count > 1) {
+@@ -2821,18 +2822,21 @@ int snd_pcm_open_substream(struct snd_pcm *pcm, int stream,
+ 	}
+ 
+ 	err = snd_pcm_hw_constraints_init(substream);
++	pr_info("pcm_open: constraints_init -> %d\n", err);
+ 	if (err < 0) {
+ 		pcm_dbg(pcm, "snd_pcm_hw_constraints_init failed\n");
+ 		goto error;
+ 	}
+ 
+ 	err = substream->ops->open(substream);
++	pr_info("pcm_open: ops->open -> %d\n", err);
+ 	if (err < 0)
+ 		goto error;
+ 
+ 	substream->hw_opened = 1;
+ 
+ 	err = snd_pcm_hw_constraints_complete(substream);
++	pr_info("pcm_open: constraints_complete -> %d\n", err);
+ 	if (err < 0) {
+ 		pcm_dbg(pcm, "snd_pcm_hw_constraints_complete failed\n");
+ 		goto error;
+diff --git a/sound/soc/qcom/qdsp6/q6asm-dai.c b/sound/soc/qcom/qdsp6/q6asm-dai.c
+index 4f09fdd40..18d9f2d89 100644
+--- a/sound/soc/qcom/qdsp6/q6asm-dai.c
++++ b/sound/soc/qcom/qdsp6/q6asm-dai.c
+@@ -378,6 +378,8 @@ static int q6asm_dai_open(struct snd_soc_component *component,
+ 	stream_id = cpu_dai->driver->id;
+ 
+ 	pdata = snd_soc_component_get_drvdata(component);
++	pr_info("q6asm-dai open: comp %s pdata %px stream %d\n", component->name, pdata,
++		substream->stream);
+ 	if (!pdata) {
+ 		dev_err(dev, "Drv data not found ..\n");
+ 		return -EINVAL;
+diff --git a/sound/soc/soc-pcm.c b/sound/soc/soc-pcm.c
+index 3137c091b..162826d57 100644
+--- a/sound/soc/soc-pcm.c
++++ b/sound/soc/soc-pcm.c
+@@ -980,16 +980,19 @@ static int __soc_pcm_open(struct snd_soc_pcm_runtime *rtd,
+ 		goto err;
+ 
+ 	ret = soc_pcm_components_open(substream);
++	pr_info("soc_open: components_open %d\n", ret);
+ 	if (ret < 0)
+ 		goto err;
+ 
+ 	ret = snd_soc_link_startup(substream);
++	pr_info("soc_open: link_startup %d\n", ret);
+ 	if (ret < 0)
+ 		goto err;
+ 
+ 	/* startup the audio subsystem */
+ 	for_each_rtd_dais(rtd, i, dai) {
+ 		ret = snd_soc_dai_startup(dai, substream);
++		pr_info("soc_open: dai_startup %s -> %d\n", dai->name, ret);
+ 		if (ret < 0)
+ 			goto err;
+ 	}
+@@ -1003,6 +1006,10 @@ static int __soc_pcm_open(struct snd_soc_pcm_runtime *rtd,
+ 
+ 	soc_pcm_update_symmetry(substream);
+ 
++	pr_info("soc_open: hw fmt %llx rates %x ch %d-%d\n",
++		(unsigned long long)substream->runtime->hw.formats,
++		substream->runtime->hw.rates, substream->runtime->hw.channels_min,
++		substream->runtime->hw.channels_max);
+ 	ret = soc_hw_sanity_check(substream);
+ 	if (ret < 0)
+ 		goto err;
