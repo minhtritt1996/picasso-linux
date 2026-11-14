@@ -93,6 +93,24 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   the modem's dump (`CONFIG_QCOM_Q6V5_PAS` dump collection) or compare the
   sequence against Android's `rmtfs` (raw-partition mode).
 
+### Display — first real output, then a pre-init hang
+
+- With `G7A_NO_DSC=1` (uncompressed 120 Hz) the panel showed a **full white
+  screen** for the first time: the DPU/DSI path does move pixels. White is
+  consistent with the panel decoding a raw stream while the bootloader left its
+  DSC decoder on.
+- Booting with DSC re-enabled (fixed PPS) never reached init: no USB gadget, no
+  `auto_reboot`, so the machine needed a manual power reset. Same for a
+  display-disabled build with all three pinctrl tiles mapped, so the hang is not
+  the display alone.
+- The display pipeline is now disabled in the board DTS (`&mdss { status =
+  "disabled"; }`) until the pre-init hang is understood; the panel driver stays
+  compiled.
+- Reminder: `patches/linux/picasso/0005-pinctrl-msm-skip-unmapped-tiles.patch`
+  must stay applied - restoring `pinctrl-msm.c` from the vendor baseline made
+  the pinctrl probe fail with `-EINVAL: invalid resource (null)`, which defers
+  UART/DSI/UFS (all pinmux consumers) and looks like a dead board.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at
