@@ -153,6 +153,33 @@ static int cmdline_seconds(const char *key)
 }
 
 
+/* path of the state file of the remoteproc whose name matches (adsp/modem/...) */
+static int rproc_state_path(const char *name, char *out, size_t outlen)
+{
+	DIR *d = opendir("/sys/class/remoteproc");
+	struct dirent *e;
+
+	if (!d)
+		return -1;
+	while ((e = readdir(d)) != NULL) {
+		char nm[128], st[128];
+
+		if (strncmp(e->d_name, "remoteproc", 10))
+			continue;
+		snprintf(nm, sizeof(nm), "/sys/class/remoteproc/%s/name", e->d_name);
+		if (read_file(nm, st, sizeof(st)) <= 0)
+			continue;
+		st[strcspn(st, "\n")] = 0;
+		if (strcmp(st, name))
+			continue;
+		snprintf(out, outlen, "/sys/class/remoteproc/%s/state", e->d_name);
+		closedir(d);
+		return 0;
+	}
+	closedir(d);
+	return -1;
+}
+
 /* true when the kernel cmdline contains the given token */
 static int cmdline_flag(const char *flag)
 {
@@ -291,17 +318,33 @@ static void scan_logdump(void)
 		return;
 	klog("logdump: %zd bytes\n", n);
 	{
+		/* the loader writes its log at the start of the partition: show the head */
+		char head[768];
+		size_t i;
+
+		for (i = 0; i < sizeof(head) - 1 && i < (size_t)n; i++)
+			head[i] = (buf[i] >= 32 && buf[i] < 127) || buf[i] == '\n' ? buf[i] : '.';
+		head[i] = 0;
+		klog("logdump head: %s\n", head);
+	}
+	{
 		char *p = buf, *end = buf + n;
 
 		while (p < end) {
 			char *nl = memchr(p, '\n', end - p);
 			size_t len = nl ? (size_t)(nl - p) : (size_t)(end - p);
 
-			if (len < 200 &&
+			if (len >= 4 && len < 220 &&
 			    (memmem(p, len, "Exception", 9) ||
 			     memmem(p, len, "Synchronous", 11) ||
 			     memmem(p, len, "PANIC", 5) ||
-			     memmem(p, len, "panic", 5)))
+			     memmem(p, len, "panic", 5) ||
+			     memmem(p, len, "watchdog", 8) ||
+			     memmem(p, len, "pet=", 4) ||
+			     memmem(p, len, "set_time", 8) ||
+			     memmem(p, len, "budget", 6) ||
+			     memmem(p, len, "jumping to", 10) ||
+			     memmem(p, len, "payload:", 8)))
 				klog("logdump| %.*s\n", (int)len, p);
 			if (!nl)
 				break;
@@ -541,9 +584,43 @@ static void mount_firmware(void)
 		     access("/dev/qcom_rmtfs_mem1", R_OK | W_OK) == 0 ? "present" : "missing");
 	}
 
+	/* start the ADSP (audio) if the board enabled it */
+	{
+		DIR *d = opendir("/sys/class/remoteproc");
+		struct dirent *e;
+
+		if (d) {
+			while ((e = readdir(d)) != NULL) {
+				char nm[128], st[160];
+
+				if (strncmp(e->d_name, "remoteproc", 10))
+					continue;
+				snprintf(nm, sizeof(nm), "/sys/class/remoteproc/%s/name", e->d_name);
+				if (read_file(nm, st, sizeof(st)) <= 0)
+					continue;
+				if (!strstr(st, "adsp"))
+					continue;
+				snprintf(nm, sizeof(nm), "/sys/class/remoteproc/%s/state", e->d_name);
+				{
+					int fd = open(nm, O_WRONLY);
+
+					if (fd >= 0) {
+						if (write(fd, "start", 5) < 0)
+							klog("adsp: start failed: %s\n", strerror(errno));
+						else
+							klog("adsp: start written\n");
+						close(fd);
+					}
+				}
+			}
+			closedir(d);
+		}
+	}
+
 	/* start the modem so PAS authenticates the firmware */
 	{
-		int fd = open("/sys/class/remoteproc/remoteproc0/state", O_WRONLY);
+		char mp[128];
+		int fd = rproc_state_path("modem", mp, sizeof(mp)) == 0 ? open(mp, O_WRONLY) : -1;
 		static const char *const fw[] = {
 			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/modem.mdt",
 			"/lib/firmware/qcom/sm7250/xiaomi/picasso/image/bdwlan.bin",
@@ -565,20 +642,20 @@ static void mount_firmware(void)
 	}
 
 	if (fork() == 0) {
-		static const char *const f[] = {
-			"/sys/class/remoteproc/remoteproc0/state",
-			"/sys/class/remoteproc/remoteproc0/firmware",
-			"/sys/class/remoteproc/remoteproc0/name",
-		};
-		char buf[256];
-		int i, j;
+		char buf[256], pth[160];
+		int i;
+
+		(void)pth;
 
 		for (i = 0; i < 120; i++) {
 			sleep(1);
 			if (i == 3 || i == 10 || i % 30 == 0) {
-				for (j = 0; j < (int)ARRAY_SIZE(f); j++)
-					if (read_file(f[j], buf, sizeof(buf)) > 0)
-						klog("state: %s = %s", f[j], buf);
+				if (rproc_state_path("adsp", pth, sizeof(pth)) == 0 &&
+				    read_file(pth, buf, sizeof(buf)) > 0)
+					klog("state: adsp = %s", buf);
+				if (rproc_state_path("modem", pth, sizeof(pth)) == 0 &&
+				    read_file(pth, buf, sizeof(buf)) > 0)
+					klog("state: modem = %s", buf);
 				list_dir("/sys/class/net");
 				scan_regulators();
 				{

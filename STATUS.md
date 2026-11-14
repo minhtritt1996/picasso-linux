@@ -111,6 +111,18 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   the pinctrl probe fail with `-EINVAL: invalid resource (null)`, which defers
   UART/DSI/UFS (all pinmux consumers) and looks like a dead board.
 
+### ADSP + modem both running (audio prerequisite)
+
+- `&adsp { firmware-name = "qcom/sm7250/xiaomi/picasso/image/adsp.mdt"; status = "okay"; }`;
+  `CONFIG_QCOM_Q6V5_PAS=y` already covers the `qcom,sm7250-adsp-pas` node.
+- init starts remoteprocs **by name** (adsp then modem) and the monitor logs both:
+  `state: adsp = running`, `state: modem = running` at 6/9/16 s.
+- With ADSP enabled it probes first, so `remoteproc0` is the adsp and the modem is
+  `remoteproc1` - hard-coded `remoteproc0` paths start the wrong rproc.
+- Next for audio: q6apm/q6prm + `sound` card + WCD938x (SoundWire) + WSA881x +
+  tfa98xx (i2c 0x34); for Wi-Fi: ath10k still does not create wlan0, needs the
+  modem's wlan pd (pd-mapper/QMI) - the modem still DOGs at ~44 s.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at
