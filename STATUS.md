@@ -300,3 +300,19 @@ as the modem.
 | UFS | `ufshcd-qcom 1d84000.ufshc` probe 0; 6 LUNs, GPT partitions scanned (`sda1..sda35`, `sde1..sde62`) |
 | userdata | mounted **read-only**: `sda34` found by PARTNAME, `mount (f2fs, ro)`; klog: `userdata /dev/sda34 mounted read-only` |
 | display | MDSS/DPU 6.1.0 (`dpu hardware revision:0x60010000`), DSI + 7nm PHY, panel `panel-xiaomi-g7a` bound; `msmdrmfb` fb0 registered on minor 1 |
+
+## Bring-up matrix (2026-11-14, measured on hardware)
+
+| Subsystem | Evidence today | Remaining |
+|---|---|---|
+| GPU | `arm-smmu 3da0000` probes, `adreno 3d00000.gpu` binds, GMU present, `a650_sqe.fw`/`a650_gmu.bin`/`a620_zap.mbn` load, **`/dev/dri/renderD128` exists** | userspace acceleration (Mesa/freedreno) + a render smoke test |
+| Audio | card `XiaomiRedmiK305` (snd-sm8250), TFA9874 binds (`0-0034` on i2c0), ADSP PAS running, APR q6core/q6afe/q6asm/q6adm probe, PDR audio_pd up | PCM open returns EINVAL before `soc_pcm_open`/`q6asm_dai_open` (both instrumented, never called) - DPCM FE path; ADSP user-PD DOG every ~44 s |
+| Bluetooth | chip answers Product 0x0a / SOC 0x40010320 / ROM 0x0302 / patch 0x0de9 with `qcom,wcn3991-bt`; firmware from `/lib/firmware/qca` with `firmware-name = nvm, rampatch` | rampatch TLV send times out (`0xfc00`); one 0xFD frame-reassembly error per setup |
+| Wi-Fi | modem PAS boots, rmtfs serves EFS, pd-mapper answers domain lists (node 1 = modem), ADSP up | modem watchdog DOG at ~45 s then `can't start rproc modem: -110`; no wlan0 |
+| Display | DSI timing/DSC correct, DPU busy, PLL set_rate 600 MHz + 801.88 MHz, colour-quadrant test painted into fb0 | one human look: four coloured quadrants / white / logo |
+
+Iteration aids: `bootcpu=1` makes the loader watch the kernel from core 0 and
+return to fastboot on its own (~48 s) while the kernel keeps running, so
+`oem ramoops` becomes a live kernel-log read; `tone` console command; colour
+framebuffer pattern; `0001..0007` patch series re-verified from a clean tree
+(`[OK] series applies to a clean tree and the DTB builds`).
