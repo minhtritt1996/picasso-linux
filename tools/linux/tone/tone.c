@@ -27,9 +27,20 @@ int main(int argc, char **argv)
 	unsigned int rate = 48000, ch = 2, half, n = 0;
 	int fd, i, frames;
 
-	fprintf(stderr, "stage: open %s\n", dev);
-	fd = open(dev, O_RDWR);
-	if (fd < 0) { perror("open"); return 1; }
+	{
+		static const int flags[] = { O_RDWR, O_WRONLY, O_RDWR | O_NONBLOCK, O_WRONLY | O_NONBLOCK };
+		static const char *const nm[] = { "O_RDWR", "O_WRONLY", "O_RDWR|NB", "O_WRONLY|NB" };
+		int i;
+
+		for (i = 0; i < 4; i++) {
+			fd = open(dev, flags[i]);
+			fprintf(stderr, "open %s -> %d%s\n", nm[i], fd, fd < 0 ? "" : " (ok)");
+			if (fd >= 0)
+				break;
+		}
+		if (fd < 0)
+			return 1;
+	}
 	fprintf(stderr, "stage: hw_params\n");
 
 	memset(&hp, 0, sizeof(hp));

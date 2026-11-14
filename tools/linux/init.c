@@ -329,13 +329,35 @@ static void paint_fb(void)
 		klog("fb0: open failed: %s\n", strerror(errno));
 		return;
 	}
-	ur = open("/dev/urandom", O_RDONLY);
-	for (i = 0; i < 240 && ur >= 0; i++) {
-		ssize_t n = read(ur, buf, sizeof(buf));
+	/* four solid quadrants: red, green / blue, white */
+	{
+		size_t total = 240 * sizeof(buf);
+		size_t off = 0;
+		unsigned int px = 0;
 
-		if (n <= 0 || write(fd, buf, n) != n)
-			break;
+		while (off < total) {
+			size_t chunk = total - off > sizeof(buf) ? sizeof(buf) : total - off;
+			unsigned int *w = (unsigned int *)buf;
+			size_t j;
+
+			for (j = 0; j < chunk / 4; j++, px++) {
+				unsigned int x = px % 1080, y = (px / 1080) % 2400;
+
+				if (x < 540 && y < 1200)
+					w[j] = 0x00ff0000;	/* red */
+				else if (x >= 540 && y < 1200)
+					w[j] = 0x0000ff00;	/* green */
+				else if (x < 540)
+					w[j] = 0x000000ff;	/* blue */
+				else
+					w[j] = 0x00ffffff;	/* white */
+			}
+			if (write(fd, buf, chunk) != (ssize_t)chunk)
+				break;
+			off += chunk;
+		}
 	}
+	ur = -1;
 	if (ur >= 0)
 		close(ur);
 	close(fd);
