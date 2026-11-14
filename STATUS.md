@@ -493,3 +493,25 @@ Debug tools that made this findable, all loader-side:
 reset-surviving breadcrumb word at `0xF3FF0000` printed at loader start,
 `fastboot oem ramoops` (the kernel's RAM console) and `fastboot oem screenshot`
 (raw framebuffer; `getvar screen` = `1080 2400 4320`, BGRA).
+
+### The `tqftpserv` error spam
+
+`failed to create tqftpserv readwrite directory` repeated in `dmesg` came from
+our own initramfs: `init.c` starts `rmtfs`, `pd-mapper` and `tqftpserv` (they
+feed the DSPs their PD map, EFS and firmware over QRTR/TFTP), but the cpio had
+no `/var/lib` at all, so `tqftpserv` could not create its
+`/var/lib/tqftpserv/readwrite` directory and logged on every attempt.
+
+Fixed in `tools/linux/mkinitramfs.sh`:
+`/var/lib/tqftpserv/{readonly,readwrite}` and `/var/lib/pd-mapper`.
+
+Verified: the spam is gone (`dmesg tqftpserv` now shows only the service start),
+and with the three services actually running this boot also shows
+`pd-mapper: domain list request from node 0/1/5` (the remotes asking for their PD
+maps), `rmtfs_mem1 present`, and `remoteproc1: remote processor modem is now up`
+with `state: modem = running`.
+
+The ADSP still hits `USER-PD DOG detects stalled initialization` a few times
+after boot and recovers to `running` — slower than the ~20 s cycle before, but
+not fixed: the sensor PD inside the Xiaomi image wants more than pd-mapper,
+rmtfs and tqftpserv.

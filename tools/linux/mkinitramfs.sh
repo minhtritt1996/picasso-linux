@@ -15,6 +15,10 @@ command -v cpio >/dev/null || { echo "mkinitramfs: cpio not found" >&2; exit 1; 
 
 rm -rf "$TMP"
 mkdir -p "$TMP/dev" "$TMP/proc" "$TMP/sys" "$TMP/tmp" "$TMP/run"
+# service state: tqftpserv refuses to start without its readwrite directory,
+# pd-mapper keeps its PD map here
+mkdir -p "$TMP/var/lib/tqftpserv/readonly" "$TMP/var/lib/tqftpserv/readwrite" \
+	 "$TMP/var/lib/pd-mapper"
 "$CC" -static -Os -s -o "$TMP/init" "$ROOT/tools/linux/init.c"
 chmod 755 "$TMP/init"
 
