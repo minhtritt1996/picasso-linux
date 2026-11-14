@@ -151,6 +151,24 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
 - Until this is cracked, BT (uart5 38-41, swctrl 73), touch (4/5/9) and the amp
   (49/50) cannot be muxed; Wi-Fi/ADSP/modem/display paths do not depend on it.
 
+### Vendor ground truth (Droidian dmesg + picasso-lito-combined.dtb)
+
+- TLMM: one node `pinctrl@f000000`, `reg = <0xf000000 0x1000000>`, flat
+  `qcom,lito-pinctrl`; the vendor driver bakes tile offsets
+  (SOUTH 0x100000 / WEST 0x500000 / EAST 0x900000) into the per-pin registers.
+- The TFA98XX amp is on **i2c 988000 (SE8), addr 0x34** at 400 kHz
+  (`tfa98xx 1-0034`, `i2c_geni 988000.i2c: Bus frequency ... 400000Hz`) with pins
+  gpio49/50 (`qup12`, WEST tile) and reset tlmm 58 - matches our DTS.
+- Touch is `NVT-ts-spi` (Novatek SPI) in the vendor kernel; BT uses the 4-wire
+  QUART (`894000.qcom,qup_uart`).
+- So the vendor kernel muxes WEST/EAST pins on the same hardware: the register
+  addresses are right, and our failures are in how mainline reaches them, not in
+  the platform map.
+- Loader now has `oem peek <hex>` (reads one word, replies the value, exception
+  hook prints the fault). It must be exercised from a **probe payload** (XNUP with
+  loader.efi + usb and no kernel), because the loader only serves fastboot while
+  it waits before `oem run`.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at
