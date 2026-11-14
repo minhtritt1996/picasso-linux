@@ -634,3 +634,37 @@ What is proven on hardware today:
   under /lib/firmware; the vendor's `.jsn` files may be missing); (3) start
   ordering — the modem must come up *after* both are serving and must not be
   touched afterwards (a stop/start of a crashed modem returns `-EINVAL`).
+
+### SSH over the USB cable (done) and where Wi-Fi stands
+
+**SSH works, verified after a clean boot:**
+
+```
+ssh -i <key> root@fe80::11:22ff:fe33:4455%enx021122334466   # host side
+→ SSH_OK, uid=0(root), Linux 7.3.0-rc7 aarch64, 8 cpus, 5296 MB RAM
+```
+
+- The gadget now carries two functions: `acm.GS0` (console) and `ecm.usb0`
+  (`usbacm.c`), so one cable gives a console and an IP link (`usb0`, carrier
+  follows the phone-side link). `usb0-up.service` just does
+  `ip link set usb0 up`; both ends then have IPv6 link-local and ssh runs over
+  that — no DHCP, no routing, no host root needed (`fe80::11:22ff:fe33:4455`
+  from `dev_addr 02:11:22:33:44:55`).
+- Two rootfs traps this exposed, both now fixed in the image and the README:
+  `/usr/sbin` must be a **symlink to `bin`** (Fedora 44 merges it; our earlier
+  hand-made empty directory hid every sbin binary, `sshd` included), and the PAM
+  stack needs **`/etc/pam.d/password-auth`** as well as `system-auth` +
+  `postlogin` (without it sshd logs `Access denied for user root by PAM account
+  configuration`).
+- `sshd` listens on `0.0.0.0:22` and `[::]:22`; `/root/.ssh/authorized_keys`
+  holds the host's ed25519 key (the corresponding private key lives on the host
+  at `/tmp/picasso_key`, regenerate if the phone image is rebuilt elsewhere).
+
+**Wi-Fi:** `pd-mapper` in the foreground *does* find all six PD-map files
+(`adspua/adsps/adspr`, `cdspr`, `modemr/modemuw`) and serves them — the modem
+(node 5) then hammers it with domain-list requests and its own watchdog fires
+(`dog_hal_common.c:180 DOG detects stalled initialization`). `modemr.jsn`
+declares only the `modem` domain (no `wlan` entry; the WLAN PD is a *subdomain*
+of the modem), so the remaining work is the modem's init sequence itself, not
+the map's presence. That is the same class of problem the XNU port hit as
+"WLFW never registers".

@@ -106,7 +106,19 @@ int main(void)
 	mkdir_if_missing(GADGET "/functions/acm.GS0");
 	if (symlink(GADGET "/functions/acm.GS0", GADGET "/configs/c.1/acm.GS0") &&
 	    errno != EEXIST)
-		fprintf(stderr, "usbacm: symlink: %m\n");
+		fprintf(stderr, "usbacm: symlink acm: %m\n");
+
+	/*
+	 * A second function on the same cable: CDC-ECM, so the phone can carry an
+	 * IP link (usb0) next to the console. Addresses are static (see
+	 * /etc/systemd/network/10-usb0.network): phone 192.168.7.2/24.
+	 */
+	mkdir_if_missing(GADGET "/functions/ecm.usb0");
+	write_file(GADGET "/functions/ecm.usb0/dev_addr", "02:11:22:33:44:55");
+	write_file(GADGET "/functions/ecm.usb0/host_addr", "02:11:22:33:44:66");
+	if (symlink(GADGET "/functions/ecm.usb0", GADGET "/configs/c.1/ecm.usb0") &&
+	    errno != EEXIST)
+		fprintf(stderr, "usbacm: symlink ecm: %m\n");
 
 	return bind_udc() == 0 ? 0 : 1;
 }

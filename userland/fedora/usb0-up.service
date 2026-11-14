@@ -1,0 +1,12 @@
+[Unit]
+Description=Bring the USB-ECM link up (IPv6 link-local ssh)
+After=usbacm.service
+Wants=usbacm.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/ip link set usb0 up
+
+[Install]
+WantedBy=multi-user.target
