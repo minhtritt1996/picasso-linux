@@ -123,6 +123,34 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   tfa98xx (i2c 0x34); for Wi-Fi: ath10k still does not create wlan0, needs the
   modem's wlan pd (pd-mapper/QMI) - the modem still DOGs at ~44 s.
 
+### Audio — stack in, card blocked by the amp's pins (TLMM)
+
+- Config (built in, no modules): SOUND/SND/SND_SOC, QCOM_APR, SND_SOC_QCOM(+COMMON,
+  SDW), all SND_SOC_QDSP6_* (AFE/ADM/ASM/APM/PRM), SND_SOC_SM8250, WCD938X(+SDW),
+  WSA881X, TFA9874, SOUNDWIRE(+QCOM), SND_USB_AUDIO + SND_SOC_USB (SM8250 machine
+  driver requires the USB-offload helpers at link time).
+- DTS: `&sound { compatible = "qcom,sm8250-sndcard"; ... }` with mm1 -> q6asmdai
+  MM1 and a Secondary-MI2S link (pins gpio70/71/72/74, `sec_mi2s`), TFA9874 amp on
+  a new `i2c8` (SE8, 0x988000, gpio49/50 `qup12`, reset tlmm58) and
+  `&q6asmdai { dai@0..7 { direction = <Q6ASM_DAI_RX>; } }` (the driver needs one
+  child per frontend dai: without them it fails "No dais found in DT").
+- Verified: APR/q6core/q6afe/q6adm/q6asm all probe; the card now defers only on
+  `Secondary MI2S Playback: codec dai not found` -> the TFA9874 never answers,
+  because its i2c pins 49/50 are WEST-tile pins that the TLMM override drops.
+- ADSP (remoteproc0) also trips `USER-PD DOG detects stalled initialization` at
+  ~46 s, the audio twin of the modem DOG.
+
+### TLMM — the wall that blocks BT, touch and the amp
+
+- Only the window `0xf100000 + 0x300000` is safely accessible; mapping
+  `0xf000000`, 16 MiB, or vendor-style offsets (WEST 0x400000 / EAST 0x800000)
+  inside a larger window all abort before init.
+- Because every pin fits in that 3 MiB window at `0x1000*id`, the flat layout is
+  the only viable one, but any attempt to give the EAST/WEST groups their offsets
+  in the same window still kills the boot at ~0.33 s (before pinctrl probes).
+- Until this is cracked, BT (uart5 38-41, swctrl 73), touch (4/5/9) and the amp
+  (49/50) cannot be muxed; Wi-Fi/ADSP/modem/display paths do not depend on it.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at

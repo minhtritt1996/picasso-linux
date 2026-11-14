@@ -180,6 +180,51 @@ static int rproc_state_path(const char *name, char *out, size_t outlen)
 	return -1;
 }
 
+#include <sys/syscall.h>
+
+/* load one .ko through finit_module */
+static int insmod(const char *path)
+{
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
+	int ret;
+
+	if (fd < 0)
+		return -errno;
+	ret = (int)syscall(__NR_finit_module, fd, "", 0);
+	close(fd);
+	return ret < 0 ? -errno : 0;
+}
+
+/* Load the modules listed in /lib/modules/load.order (one file name per line). */
+static void load_modules(void)
+{
+	char list[4096], path[160], name[128];
+	char *line, *save = NULL;
+	int n_ok = 0, n_err = 0;
+
+	if (read_file("/lib/modules/load.order", list, sizeof(list)) <= 0) {
+		klog("modules: no load.order\n");
+		return;
+	}
+	for (line = strtok_r(list, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+		int r;
+
+		if (!line[0] || line[0] == '#')
+			continue;
+		snprintf(name, sizeof(name), "%s", line);
+		snprintf(path, sizeof(path), "/lib/modules/%s", name);
+		r = insmod(path);
+		if (r == 0)
+			n_ok++;
+		else if (r != -EEXIST) {
+			n_err++;
+			if (n_err <= 12)
+				klog("modules: %s failed: %d\n", name, -r);
+		}
+	}
+	klog("modules: %d loaded, %d failed\n", n_ok, n_err);
+}
+
 /* true when the kernel cmdline contains the given token */
 static int cmdline_flag(const char *flag)
 {
@@ -657,6 +702,12 @@ static void mount_firmware(void)
 				    read_file(pth, buf, sizeof(buf)) > 0)
 					klog("state: modem = %s", buf);
 				list_dir("/sys/class/net");
+				{
+					char cards[512];
+
+					if (read_file("/proc/asound/cards", cards, sizeof(cards)) > 0)
+						klog("asound: %s\n", cards);
+				}
 				scan_regulators();
 				{
 					char buf[4096];
@@ -919,6 +970,7 @@ int main(void)
 	printf("%-14s %ld MiB\n", "memory", mem > 0 ? mem / 1024 : -1);
 	print_prop("/proc/device-tree/chosen/bootargs", "bootargs");
 	mount_userdata();
+	load_modules();
 	if (cmdline_flag("nomodem"))
 		klog("safe mode: modem/BT firmware services skipped\n");
 	else
