@@ -450,3 +450,19 @@ reaches userspace).
 **Workspace invariant note:** the `boot` partition was written (user's explicit
 instruction) so loader changes take effect on `reboot`; the running system is
 still RAM-only apart from that one boot image.
+
+#### Resident path: breadcrumb result
+
+A reset-surviving breadcrumb word (`0xF3FF0000`, printed at loader start,
+`0x1000`…`0x1005` through `boot_linux`) shows the loader gets to **0x1005**,
+i.e. `/chosen` was patched and `LoadImage` succeeded; the phone then resets
+while the kernel is entering (no console text, no `linux-fail` code). So the
+DTB side is fine and the fault is in how the kernel meets the resident region:
+the loader *claims* the window (`choose_window`, `allocate_pages`) for the XNU
+path, and for Linux that big `EfiLoaderData` block — with the initrd inside it —
+is handed to the kernel as usable memory. Next things to try, in order:
+(1) do not claim the window in the Linux path (only choose an address, pass it
+via /chosen, let the kernel treat that range as reserved through the initrd
+properties); (2) build with `CONFIG_EFI_DEBUG` so the stub's own messages appear;
+(3) compare with the XNU path, which uses the same resident image but ignores
+the EFI map entirely.
