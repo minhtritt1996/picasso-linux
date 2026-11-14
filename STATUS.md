@@ -784,3 +784,23 @@ NetworkManager still reports `wlan0: unmanaged` (it was started before
 wpa_supplicant existed and does not pick the device up afterwards), so
 connecting is done directly with `wpa_supplicant` next; `sshd` already listens
 on 22 and the USB-ECM link keeps working meanwhile.
+
+### Wi-Fi connected, DHCP, ssh over Wi-Fi (verified after a clean boot)
+
+```
+wlan0  UP  <lan-ip>/22  (DHCP from <lan-ip>)
+iw dev wlan0 link -> Connected to <bssid>, SSID <ssid>, 5765 MHz, -50 dBm
+ssh root@<lan-ip> -> SSH_OVER_WIFI_OK
+```
+
+The missing piece for a *managed* device was `NetworkManager-wifi` (the plugin
+lives in a separate Fedora package; without it NM logs
+`'wifi' plugin not available; creating generic device` and leaves wlan0
+`unmanaged`). With `NetworkManager-wifi` + `wpa_supplicant` + `iw` installed,
+`nmcli dev wifi connect` associates and does DHCP with NM's internal client
+(`nm-dhcp-helper`; there is no dhclient/udhcpc in this image).
+
+The profile is baked into the image (`userland/fedora/<ssid>.nmconnection`,
+`/etc/NetworkManager/system-connections/`, mode 600, autoconnect) and
+`NetworkManager.service` is enabled, so a freshly booted phone joins the
+network by itself and is reachable over Wi-Fi as well as over the USB-ECM link.
