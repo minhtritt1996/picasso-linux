@@ -1,0 +1,14 @@
+[Unit]
+Description=USB CDC-ACM gadget console (picasso)
+After=sys-kernel-config.mount
+Wants=sys-kernel-config.mount
+Before=serial-getty@ttyGS0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/usbacm
+ExecStop=/bin/sh -c 'echo "" > /sys/kernel/config/usb_gadget/g1/UDC || true'
+
+[Install]
+WantedBy=multi-user.target

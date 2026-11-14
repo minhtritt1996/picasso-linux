@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically copy the boot log to UFS
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Mount the phone's firmware partitions for the DSPs
+DefaultDependencies=no
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/fw-setup.sh
+
+[Install]
+WantedBy=multi-user.target
