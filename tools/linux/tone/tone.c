@@ -8,20 +8,44 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <sound/asound.h>
+#include <stdlib.h>
+#include <string.h>
 
-static void set_mask(struct snd_pcm_hw_params *p, int var, unsigned int bit)
+/* Enable a DAPM mixer control by its exact name ("<widget> <control>"). */
+static int set_ctl(const char *name)
 {
-	p->masks[var].bits[bit / 32] |= 1u << (bit % 32);
+	struct snd_ctl_elem_value val;
+	int fd, ret = -1;
+
+	fd = open("/dev/snd/controlC0", O_RDWR);
+	if (fd < 0) { perror("open control"); return -1; }
+	memset(&val, 0, sizeof(val));
+	val.id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	strncpy((char *)val.id.name, name, sizeof(val.id.name) - 1);
+	if (ioctl(fd, SNDRV_CTL_IOCTL_ELEM_READ, &val) < 0) {
+		fprintf(stderr, "ctl read %s: %s\n", name, strerror(errno));
+	} else {
+		val.value.integer.value[0] = 1;
+		val.value.integer.value[1] = 0;
+		if (ioctl(fd, SNDRV_CTL_IOCTL_ELEM_WRITE, &val) < 0)
+			fprintf(stderr, "ctl write %s: %s\n", name, strerror(errno));
+		else {
+			fprintf(stderr, "route on: %s\n", name);
+			ret = 0;
+		}
+	}
+	close(fd);
+	return ret;
 }
 
-static void set_int(struct snd_pcm_hw_params *p, int var, unsigned int lo, unsigned int hi)
+static void enable_routes(void)
 {
-	p->intervals[var - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min = lo;
-	p->intervals[var - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].max = hi;
+	set_ctl("SEC_MI2S_RX Audio Mixer MultiMedia1");
 }
 
 int main(int argc, char **argv)
 {
+	enable_routes();
 	const char *dev = argc > 1 ? argv[1] : "/dev/snd/pcmC0D0p";
 	struct snd_pcm_hw_params hp;
 	short buf[4096];
@@ -52,28 +76,70 @@ int main(int argc, char **argv)
 	fprintf(stderr, "stage: hw_params\n");
 
 	memset(&hp, 0, sizeof(hp));
-	set_mask(&hp, SNDRV_PCM_HW_PARAM_ACCESS, SNDRV_PCM_ACCESS_RW_INTERLEAVED);
-	set_mask(&hp, SNDRV_PCM_HW_PARAM_FORMAT, SNDRV_PCM_FORMAT_S16_LE);
-	set_mask(&hp, SNDRV_PCM_HW_PARAM_SUBFORMAT, SNDRV_PCM_SUBFORMAT_STD);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_SAMPLE_BITS, 16, 16);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_FRAME_BITS, 32, 32);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_CHANNELS, 2, 2);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_RATE, rate, rate);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 1024, 1024);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_PERIODS, 4, 4);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_BUFFER_SIZE, 4096, 4096);
-	set_int(&hp, SNDRV_PCM_HW_PARAM_BUFFER_BYTES, 4096 * 4, 4096 * 4);
-	hp.rmask = ~0U;
-	hp.cmask = ~0U;
+	{
+		int k;
+
+		/* "any" masks/intervals: the kernel rejects empty ones */
+		for (k = SNDRV_PCM_HW_PARAM_FIRST_MASK; k <= SNDRV_PCM_HW_PARAM_LAST_MASK; k++)
+			memset(hp.masks[k - SNDRV_PCM_HW_PARAM_FIRST_MASK].bits, 0xff,
+			       sizeof(hp.masks[0].bits));
+		for (k = SNDRV_PCM_HW_PARAM_FIRST_INTERVAL; k <= SNDRV_PCM_HW_PARAM_LAST_INTERVAL; k++) {
+			struct snd_interval *iv = &hp.intervals[k - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL];
+
+			memset(iv, 0, sizeof(*iv));
+			iv->min = 0;
+			iv->max = ~0U;
+		}
+	}
+	if (ioctl(fd, SNDRV_PCM_IOCTL_HW_REFINE, &hp) < 0) {
+		perror("HW_REFINE");
+		return 1;
+	}
+	/* fix only what we need; the kernel chooses the rest */
+	{
+		int fi = SNDRV_PCM_HW_PARAM_FORMAT - SNDRV_PCM_HW_PARAM_FIRST_MASK;
+		int ri = SNDRV_PCM_HW_PARAM_RATE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL;
+		int ci = SNDRV_PCM_HW_PARAM_CHANNELS - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL;
+
+		int ai = SNDRV_PCM_HW_PARAM_ACCESS - SNDRV_PCM_HW_PARAM_FIRST_MASK;
+		int si = SNDRV_PCM_HW_PARAM_SUBFORMAT - SNDRV_PCM_HW_PARAM_FIRST_MASK;
+
+		memset(hp.masks[ai].bits, 0, sizeof(hp.masks[ai].bits));
+		hp.masks[ai].bits[SNDRV_PCM_ACCESS_RW_INTERLEAVED / 32] =
+			1U << (SNDRV_PCM_ACCESS_RW_INTERLEAVED % 32);
+		memset(hp.masks[fi].bits, 0, sizeof(hp.masks[fi].bits));
+		hp.masks[fi].bits[SNDRV_PCM_FORMAT_S16_LE / 32] = 1U << (SNDRV_PCM_FORMAT_S16_LE % 32);
+		memset(hp.masks[si].bits, 0, sizeof(hp.masks[si].bits));
+		hp.masks[si].bits[SNDRV_PCM_SUBFORMAT_STD / 32] =
+			1U << (SNDRV_PCM_SUBFORMAT_STD % 32);
+		memset(&hp.intervals[ri], 0, sizeof(hp.intervals[ri]));
+		hp.intervals[ri].min = rate;
+		hp.intervals[ri].max = rate;
+		hp.intervals[ri].integer = 1;
+		memset(&hp.intervals[ci], 0, sizeof(hp.intervals[ci]));
+		hp.intervals[ci].min = ch;
+		hp.intervals[ci].max = ch;
+		hp.intervals[ci].integer = 1;
+		hp.rmask = (1U << ai) | (1U << fi) | (1U << si);
+		hp.cmask = (1U << ri) | (1U << ci);
+	}
 
 	if (ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS, &hp) < 0) {
 		perror("HW_PARAMS");
 		return 1;
 	}
-	fprintf(stderr, "stage: write\n");
+	fprintf(stderr, "stage: write (buf=%u per=%u rate=%u ch=%u fmt=%u)\n",
+		hp.intervals[SNDRV_PCM_HW_PARAM_BUFFER_SIZE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min,
+		hp.intervals[SNDRV_PCM_HW_PARAM_PERIOD_SIZE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min,
+		hp.intervals[SNDRV_PCM_HW_PARAM_RATE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min,
+		hp.intervals[SNDRV_PCM_HW_PARAM_CHANNELS - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL].min,
+		hp.masks[SNDRV_PCM_HW_PARAM_FORMAT - SNDRV_PCM_HW_PARAM_FIRST_MASK].bits[0]);
+
+	if (ioctl(fd, SNDRV_PCM_IOCTL_PREPARE) < 0)
+		fprintf(stderr, "prepare: %m\n");
 
 	half = rate / 880;
-	frames = (int)rate * 3;
+	frames = (int)rate * 12; /* 12 s so a human can confirm */
 	while (frames > 0) {
 		int nf = frames > 1024 ? 1024 : frames;
 

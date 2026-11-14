@@ -316,3 +316,27 @@ return to fastboot on its own (~48 s) while the kernel keeps running, so
 `oem ramoops` becomes a live kernel-log read; `tone` console command; colour
 framebuffer pattern; `0001..0007` patch series re-verified from a clean tree
 (`[OK] series applies to a clean tree and the DTB builds`).
+
+### Display — FIXED (2026-11-14): panel reset polarity + init-before-video
+
+Two real bugs, both proven on hardware:
+
+1. **The panel was held in reset.** `reset-gpios = <&pm8150l_gpios 3 GPIO_ACTIVE_LOW>`
+   but the driver drove the logical sequence `1, 0, 1` and left it at 1 — with
+   ACTIVE_LOW that is physical **low** = reset asserted. Every DCS command timed
+   out (`dsi_cmds2buf_tx ... ret=-110`, `power mode pm=0xff`) and the panel
+   stayed dark while the DPU happily scanned out frames
+   (`INTF_FRAME_COUNT` 1414 → 1842, `INTF_STATUS` en=1, fb0 painted,
+   `fbsum` 65536/65536 nonzero words). Fix: drive `0, 1, 0` (end deasserted) in
+   `prepare`, assert in `unprepare`. After that the panel answers:
+   `prepare: power mode pm=0x9c err=0`.
+2. **The DSI video engine started before the panel was initialised.** The msm
+   bridge chain ran `msm_dsi_host_enable()` in `atomic_pre_enable`, i.e. before
+   the panel bridge's `drm_panel_prepare()/enable()`, so the panel's exit-sleep
+   and display-on commands were issued on an already-running video link. Moved
+   the host enable into a new `.atomic_enable` callback, so the order is now
+   panel init → display on → video stream.
+
+Result on hardware: console text on screen, framebuffer noise, then the
+red/green/blue timeline. Display bring-up is done for the current (DSC native,
+120 Hz) configuration; DSC-off 60 Hz also works as a fallback fork.

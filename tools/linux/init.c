@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <sys/mount.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <sys/reboot.h>
 #include <sys/utsname.h>
 #include <sys/sysmacros.h>
@@ -317,51 +318,79 @@ static int find_part(const char *name, char *dev, size_t devlen)
 	return -1;
 }
 
-/* Paint /dev/fb0 with noise: the panel must then show snow. If it keeps the
- * bootloader splash instead, the DRM framebuffer is not being scanned out. */
+/* Paint /dev/fb0 with random noise. Noise is the only trustworthy signal: the
+ * bootloader keeps its splash until the first kernel frame, so a logo means the
+ * data path is dead, snow means real scanout. */
 static void paint_fb(void)
 {
 	char buf[65536];
-	int fd, ur, i;
+	int fd, ur, i = 0;
+	size_t total, off = 0;
 
 	fd = open("/dev/fb0", O_WRONLY);
 	if (fd < 0) {
 		klog("fb0: open failed: %s\n", strerror(errno));
 		return;
 	}
-	/* four solid quadrants: red, green / blue, white */
-	{
-		size_t total = 240 * sizeof(buf);
-		size_t off = 0;
-		unsigned int px = 0;
-
-		while (off < total) {
-			size_t chunk = total - off > sizeof(buf) ? sizeof(buf) : total - off;
-			unsigned int *w = (unsigned int *)buf;
-			size_t j;
-
-			for (j = 0; j < chunk / 4; j++, px++) {
-				unsigned int x = px % 1080, y = (px / 1080) % 2400;
-
-				if (x < 540 && y < 1200)
-					w[j] = 0x00ff0000;	/* red */
-				else if (x >= 540 && y < 1200)
-					w[j] = 0x0000ff00;	/* green */
-				else if (x < 540)
-					w[j] = 0x000000ff;	/* blue */
-				else
-					w[j] = 0x00ffffff;	/* white */
-			}
-			if (write(fd, buf, chunk) != (ssize_t)chunk)
-				break;
-			off += chunk;
-		}
+	total = 1080 * 2400 * 4;
+	ur = open("/dev/urandom", O_RDONLY);
+	if (ur < 0) {
+		klog("fb0: no urandom: %s\n", strerror(errno));
+		close(fd);
+		return;
 	}
-	ur = -1;
-	if (ur >= 0)
-		close(ur);
+	while (off < total) {
+		size_t chunk = total - off > sizeof(buf) ? sizeof(buf) : total - off;
+		ssize_t n = read(ur, buf, chunk);
+
+		if (n <= 0)
+			break;
+		if (write(fd, buf, n) != n)
+			break;
+		off += n;
+		i++;
+	}
+	close(ur);
 	close(fd);
-	klog("picasso-init: fb0 painted %d x 64K\n", i);
+	klog("picasso-init: fb0 noise %d x 64K\n", i);
+}
+
+/* Paint the whole framebuffer one solid colour (32bpp). */
+static void paint_solid(unsigned int colour)
+{
+	char buf[65536];
+	size_t total = 1080 * 2400 * 4, off = 0;
+	unsigned int *w = (unsigned int *)buf;
+	int fd, j;
+
+	for (j = 0; j < (int)(sizeof(buf) / 4); j++)
+		w[j] = colour;
+	fd = open("/dev/fb0", O_WRONLY);
+	if (fd < 0)
+		return;
+	while (off < total) {
+		size_t chunk = total - off > sizeof(buf) ? sizeof(buf) : total - off;
+
+		if (write(fd, buf, chunk) != (ssize_t)chunk)
+			break;
+		off += chunk;
+	}
+	close(fd);
+}
+
+/* Colour timeline so a human can tell live scanout from a stale splash. */
+static void paint_timeline(void)
+{
+	sleep(20);
+	klog("picasso-init: fb0 red\n");
+	paint_solid(0x00ff0000);
+	sleep(6);
+	klog("picasso-init: fb0 green\n");
+	paint_solid(0x0000ff00);
+	sleep(6);
+	klog("picasso-init: fb0 blue\n");
+	paint_solid(0x000000ff);
+	_exit(0);
 }
 
 /* create every parent directory of path (absolute) */
@@ -935,6 +964,150 @@ static void cmd(int fd, char *line)
 		reboot(RB_AUTOBOOT);
 	} else if (!strcmp(line, "help")) {
 		dprintf(fd, "commands: reboot, help, uname, mem, cat FILE, ls DIR\n");
+	} else if (!strncmp(line, "dmesg", 5)) {
+		const char *pat = line[5] ? line + 5 : "";
+
+		while (*pat == ' ')
+			pat++;
+		char *buf = malloc(1 << 20);
+		int kfd, total = 0, shown = 0;
+
+		if (!buf) {
+			dprintf(fd, "dmesg: no memory\n");
+		} else if ((kfd = open("/dev/kmsg", O_RDONLY | O_NONBLOCK)) < 0) {
+			dprintf(fd, "dmesg: %m\n");
+			free(buf);
+		} else {
+			while (total < (1 << 20) - 4096) {
+				int n = read(kfd, buf + total, (1 << 20) - 4096 - total);
+
+				if (n <= 0)
+					break;
+				total += n;
+			}
+			close(kfd);
+			{
+				char *p2 = buf, *end = buf + total;
+
+				while (p2 < end) {
+					char *nl = memchr(p2, '\n', end - p2);
+					char *semi = memchr(p2, ';', (nl ? nl : end) - p2);
+
+					if (!nl)
+						break;
+					*nl = 0;
+					if (semi && strstr(semi + 1, pat) && shown < 40) {
+						char keep = semi[1 + 380];
+						const char *m = semi + 1;
+
+						semi[1 + 380] = 0;
+						dprintf(fd, "K %s\n", m);
+						semi[1 + 380] = keep;
+						shown++;
+					}
+					p2 = nl + 1;
+				}
+			}
+			dprintf(fd, "dmesg: %d/%d bytes, %d match\n", total, 1 << 20, shown);
+			free(buf);
+		}
+	} else if (!strncmp(line, "tailk", 5)) {
+		int want = line[5] ? atoi(line + 6) : 40;
+		char *buf = malloc(1 << 21);
+		int kfd, total = 0, nrec = 0, printed = 0;
+		char **recs;
+
+		if (want <= 0 || want > 400)
+			want = 40;
+		recs = malloc(sizeof(char *) * 4096);
+		if (!buf || !recs) {
+			dprintf(fd, "tailk: no memory\n");
+		} else if ((kfd = open("/dev/kmsg", O_RDONLY | O_NONBLOCK)) < 0) {
+			dprintf(fd, "tailk: %m\n");
+		} else {
+			while (total < (1 << 21) - 8192) {
+				int n = read(kfd, buf + total, (1 << 21) - 8192 - total);
+
+				if (n <= 0)
+					break;
+				total += n;
+			}
+			close(kfd);
+			buf[total] = 0;
+			{
+				char *p2 = buf, *end = buf + total;
+
+				while (p2 < end && nrec < 4096) {
+					char *nl = memchr(p2, '\n', end - p2);
+					char *semi;
+
+					if (!nl)
+						break;
+					*nl = 0;
+					semi = memchr(p2, ';', nl - p2);
+					if (semi && nrec < 4096)
+						recs[nrec++] = semi + 1;
+					p2 = nl + 1;
+				}
+			}
+			for (int r = nrec > want ? nrec - want : 0; r < nrec; r++) {
+				dprintf(fd, "K %s\n", recs[r]);
+				printed++;
+			}
+			dprintf(fd, "tailk: %d bytes, %d records, showed %d\n", total, nrec, printed);
+		}
+		free(recs);
+		free(buf);
+	} else if (!strncmp(line, "mmio", 4)) {
+		char *arg = line + 4;
+		unsigned long base = strtoul(arg, &arg, 0);
+		int n = 1, k, mfd;
+		volatile unsigned int *p;
+		long pg = sysconf(_SC_PAGESIZE);
+
+		if (*arg)
+			n = atoi(arg);
+		if (n < 1 || n > 32)
+			n = 1;
+		mfd = open("/dev/mem", O_RDONLY);
+		if (mfd < 0) {
+			dprintf(fd, "mmio: %m\n");
+		} else {
+			unsigned long page = base & ~(unsigned long)(pg - 1);
+
+			p = (volatile unsigned int *)mmap(NULL, pg * 2, PROT_READ, MAP_SHARED,
+							  mfd, (off_t)page);
+			if (p == MAP_FAILED) {
+				dprintf(fd, "mmio: mmap %m\n");
+			} else {
+				unsigned long off = (base - page) / 4;
+
+				for (k = 0; k < n; k++)
+					dprintf(fd, "%08lx = %08x\n",
+						base + 4UL * k, p[off + k]);
+				munmap((void *)p, pg * 2);
+			}
+			close(mfd);
+		}
+	} else if (!strncmp(line, "fbsum", 5)) {
+		int ffd = open("/dev/fb0", O_RDONLY);
+		unsigned int buf[4096], nz = 0, i2, k2;
+
+		if (ffd < 0) {
+			dprintf(fd, "fbsum: %m\n");
+		} else {
+			for (k2 = 0; k2 < 16; k2++) {
+				int n = read(ffd, buf, sizeof(buf));
+
+				if (n <= 0)
+					break;
+				for (i2 = 0; i2 < (unsigned int)(n / 4); i2++)
+					if (buf[i2])
+						nz++;
+			}
+			close(ffd);
+			dprintf(fd, "fbsum: nonzero words in first 256K = %u\n", nz);
+		}
 	} else if (!strcmp(line, "uname")) {
 		struct utsname u;
 
@@ -1088,6 +1261,8 @@ int main(void)
 	printf("==========================================\n");
 	dump_pstore();
 	paint_fb();
+	if (fork() == 0)
+		paint_timeline();
 	fflush(NULL);
 	klog("picasso-init: after pstore\n");
 
