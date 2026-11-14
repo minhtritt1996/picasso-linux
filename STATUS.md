@@ -187,6 +187,24 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   the handful of mux registers directly (BT gpio38-41 qup05 + gpio73, amp
   gpio49/50 qup12), bypassing pinctrl entirely, to prove BT/amp on hardware.
 
+### Audio: sound card + amp are up (playback click pending)
+
+- Missing built-in driver was the blocker: `CONFIG_I2C_QCOM_GENI=m` meant **no i2c
+  buses at all** in the RAM kernel, so the TFA9874 never probed and the card stayed
+  deferred. With `I2C_QCOM_GENI=y` (+`SPI_QCOM_GENI=y`) the amp binds
+  (`/sys/bus/i2c/devices/0-0034`) and the card registers:
+  `0 [XiaomiRedmiK305]: sm8250 - Xiaomi-Redmi-K30-5G`,
+  `/proc/asound/pcm: 00-00: MultiMedia1 (*) : : playback 1`,
+  `input: ... Headset Jack`.
+- `&adsp` runs and PDR reports `msm/adsp/audio_pd state 0x1fffffff` at ~4.4 s
+  (again at ~44 s after the ADSP user-PD DOG restarts it).
+- `tools/linux/tone` + `tone` console command exist; `open("/dev/snd/pcmC0D0p",
+  O_RDWR)` returns EINVAL today (node is controlC0/pcmC0D0p/timer, dev 116:2) -
+  next: try O_WRONLY, then instrument which `snd_pcm_open` path rejects it.
+- `drivers/soc/qcom/picasso-pinmux.c` muxes the pads pinctrl cannot (uart5
+  38-41 qup05, i2c8 49/50 qup12) with `picasso_pinmux.mode=read|write`; reads of
+  `0xf526000`/`0xf926000` work, writes execute without faults.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at

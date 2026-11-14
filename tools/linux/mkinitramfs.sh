@@ -39,6 +39,7 @@ fi
 
 # prebuilt static helpers (rmtfs, pd-mapper): see tools/linux/bin/README
 mkdir -p "$TMP/bin" "$TMP/run/rmtfs"
+"$CC" -static -Os -s -o "$TMP/bin/tone" "$ROOT/tools/linux/tone/tone.c"
 if compgen -G "$ROOT/tools/linux/bin/*" >/dev/null; then
 	cp "$ROOT"/tools/linux/bin/* "$TMP/bin/"
 	chmod 755 "$TMP"/bin/*

@@ -19,6 +19,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include <sys/wait.h>
 #include <sys/reboot.h>
 #include <sys/utsname.h>
 #include <sys/sysmacros.h>
@@ -223,6 +224,52 @@ static void load_modules(void)
 		}
 	}
 	klog("modules: %d loaded, %d failed\n", n_ok, n_err);
+}
+
+/* devtmpfs does not always populate class subdirectories without udev: create the
+ * ALSA nodes from /sys/class/sound, then run the tone test once. */
+static void audio_selftest(void)
+{
+	static const char *const names[] = { "controlC0", "pcmC0D0p", "timer" };
+	char path[128], buf[64];
+	int i;
+
+	mkdir("/dev/snd", 0755);
+	for (i = 0; i < (int)ARRAY_SIZE(names); i++) {
+		struct stat st;
+		char major[16], minor[16], *colon;
+
+		snprintf(path, sizeof(path), "/dev/snd/%s", names[i]);
+		if (stat(path, &st) == 0)
+			continue;
+		snprintf(path, sizeof(path), "/sys/class/sound/%s/dev", names[i]);
+		if (read_file(path, buf, sizeof(buf)) <= 0)
+			continue;
+		colon = strchr(buf, ':');
+		if (!colon)
+			continue;
+		snprintf(major, sizeof(major), "%.*s", (int)(colon - buf), buf);
+		snprintf(minor, sizeof(minor), "%s", colon + 1);
+		minor[strcspn(minor, "\n")] = 0;
+		snprintf(path, sizeof(path), "/dev/snd/%s", names[i]);
+		if (mknod(path, S_IFCHR | 0666, makedev(atoi(major), atoi(minor))) < 0)
+			klog("audio: mknod %s failed: %s\n", names[i], strerror(errno));
+	}
+	if (access("/dev/snd/pcmC0D0p", F_OK) != 0) {
+		klog("audio: no playback PCM\n");
+		return;
+	}
+	if (fork() == 0) {
+		int fd = open("/dev/kmsg", O_WRONLY);
+
+		if (fd >= 0) {
+			dup2(fd, 1);
+			dup2(fd, 2);
+			close(fd);
+		}
+		execl("/bin/tone", "tone", "/dev/snd/pcmC0D0p", NULL);
+		_exit(127);
+	}
 }
 
 /* true when the kernel cmdline contains the given token */
@@ -849,6 +896,25 @@ static void cmd(int fd, char *line)
 
 		uname(&u);
 		dprintf(fd, "%s %s %s\n", u.sysname, u.release, u.machine);
+	} else if (!strncmp(line, "tone", 4)) {
+		pid_t pid = fork();
+
+		if (pid == 0) {
+			static char *const av[] = { "tone", "/dev/snd/pcmC0D0p", NULL };
+
+			dup2(fd, 1);
+			dup2(fd, 2);
+			execv("/bin/tone", av);
+			_exit(127);
+		}
+		if (pid > 0) {
+			int st = 0;
+
+			waitpid(pid, &st, 0);
+			dprintf(fd, "tone: status %d\n", st);
+		} else {
+			dprintf(fd, "tone: fork failed\n");
+		}
 	} else if (!strcmp(line, "mem")) {
 		dprintf(fd, "MemTotal %ld kB\n", memtotal_kb());
 	} else if (!strncmp(line, "ls ", 3)) {
