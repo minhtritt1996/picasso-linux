@@ -32,6 +32,10 @@ mount_ro() {
 }
 
 mkdir -p "$FW/image" "$BT"
+# ath10k_snoc asks for <dir>/<board_name>/<file> with board_name = the DT's
+# "firmware-name" ("picasso"), and the WCN3990 board/firmware files live on the
+# modem partition next to wlanmdsp.mbn
+mkdir -p /lib/firmware/ath10k/picasso /lib/firmware/ath10k/WCN3990/hw1.0
 
 for p in modem dsp; do
 	if mount_ro "$p" "/usr/lib/firmware-android-$p"; then
@@ -55,6 +59,15 @@ if mount_ro bluetooth /usr/lib/firmware-android-bt; then
 	done
 fi
 
+for f in "$FW/image"/bdwlan* "$FW/image"/bdf_*.bin; do
+	[ -e "$f" ] || continue
+	ln -sf "$f" "/lib/firmware/ath10k/picasso/$(basename "$f")"
+done
+# the WCN3990 board data: ath10k looks in ath10k/WCN3990/hw1.0/board.bin;
+# the Android bdf for this panel is bdf_g7a.bin (G7A) on the modem partition
+[ -e "$FW/image/bdf_g7a.bin" ] && \
+	ln -sf "$FW/image/bdf_g7a.bin" /lib/firmware/ath10k/WCN3990/hw1.0/board.bin
+
 for drv in qcom_q6v5_pas ath10k_snoc; do
 	[ -d /sys/bus/platform/drivers/$drv ] || continue
 	for d in /sys/bus/platform/drivers/$drv/*.*; do
@@ -63,6 +76,27 @@ for drv in qcom_q6v5_pas ath10k_snoc; do
 		echo "$base" > /sys/bus/platform/drivers/$drv/unbind 2>/dev/null || true
 		sleep 0.2
 		echo "$base" > /sys/bus/platform/drivers/$drv/bind 2>/dev/null || true
+	done
+done
+
+# Bring the modem (and with it the WLAN firmware service) up cleanly: the
+# kernel starts it at boot before this service has mounted the firmware or the
+# QRTR PD services are serving, and a half-started modem never exposes
+# msm/modem/wlan_pd.  Stop it, wait, then start it and retry a few times.
+for r in /sys/class/remoteproc/remoteproc*; do
+	[ -e "$r/name" ] || continue
+	[ "$(cat "$r/name")" = "modem" ] || continue
+
+	i=0
+	while [ $i -lt 3 ]; do
+		i=$((i + 1))
+		if [ "$(cat "$r/state")" = "running" ]; then
+			echo stop > "$r/state" 2>/dev/null || true
+			sleep 2
+		fi
+		echo start > "$r/state" 2>/dev/null || true
+		sleep 6
+		[ "$(cat "$r/state")" = "running" ] && break
 	done
 done
 

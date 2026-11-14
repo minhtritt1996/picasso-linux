@@ -1,0 +1,12 @@
+[Unit]
+Description=Qualcomm protection-domain mapper (QRTR)
+Before=rmtfs.service tqftpserv.service fw-setup.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pd-mapper
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

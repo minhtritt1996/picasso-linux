@@ -1,0 +1,8 @@
+[Unit]
+Description=Seed the modem EFS for rmtfs from the phone's partitions
+Before=rmtfs.service fw-setup.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rmtfs-seed.sh

@@ -606,3 +606,31 @@ the Fedora userspace is reachable over the same USB cable (1d6b:0104).
    even the session-open fails. Weston 15 dropped `--tty`.
    GPU is hardware: `renderer: FD620`, `kmscube` at ~10.7 fps once
    `prebuilt/fw-gpu/*` (a650 GMU/SQE, a620 zap) is in `/lib/firmware/qcom`.
+
+### Wi-Fi (WCN3990, modem-hosted) — QRTR stack works, modem init is the wall
+
+What is proven on hardware today:
+
+- `pd-mapper` (static, from `tools/linux/bin`), `rmtfs` (seeded from the phone's
+  own `modemst1`/`modemst2`/`fsc`/`fsg` via `rmtfs-seed.service`) and
+  `tqftpserv` all run in Fedora; `qrtr-lookup` shows the expected node 1
+  services (14 remote-fs, 4096 TFTP, 64 registry locator).
+- With the modem started after those services: **`69 1 0 0 93 ATH10k WLAN
+  firmware service`** appears and `ath10k_snoc` completes the QMI handshake —
+  `qmi chip_id 0x320 chip_family 0x4001 soc_id 0x400b0000`,
+  `fw_version 0x321b002a … WLAN.HL.3.2.1.c2-00042-QCAHLSWMTPLZ-1.395128.1`.
+  So the WLFW path itself works on mainline once the modem is up.
+- It then wanted board data: `failed to fetch board-2.bin or board.bin from
+  ath10k/WCN3990/hw1.0`; `fw-setup` now links `bdf_g7a.bin` from the modem
+  partition there (`board.bin`).
+- **Blocked:** the modem itself keeps dying during init —
+  `qcom_q6v5_pas … watchdog received: dog_hal_common.c:180:DOG detects stalled
+  initialization, triage with IMAGE OWNER`, then `can't start rproc modem:
+  -110`. Once that happens the WLFW service is gone and `ath10k` cannot
+  handshake, so no `wlan0` and no scan.
+  Next suspects, in order: (1) the EFS content rmtfs serves (our seed is a raw
+  copy of the partitions — the modem may need its `modem_fs*` to be the exact
+  sizes Android uses); (2) the PD map from pd-mapper (it serves what it finds
+  under /lib/firmware; the vendor's `.jsn` files may be missing); (3) start
+  ordering — the modem must come up *after* both are serving and must not be
+  touched afterwards (a stop/start of a crashed modem returns `-EINVAL`).
