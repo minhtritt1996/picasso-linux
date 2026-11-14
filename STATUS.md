@@ -515,3 +515,36 @@ The ADSP still hits `USER-PD DOG detects stalled initialization` a few times
 after boot and recovers to `running` — slower than the ~20 s cycle before, but
 not fixed: the sensor PD inside the Xiaomi image wants more than pd-mapper,
 rmtfs and tqftpserv.
+
+### Fedora 44 aarch64 userspace boots to multi-user.target (2026-11-14)
+
+`Startup finished in 5.53 s (kernel) + 3.72 s (userspace) = 9.31 s`, with
+`graphical.target`, `multi-user.target`, `sockets.target`, plymouth and
+systemd-ssh-generator reached, from a 598 MB gzip cpio unpacked into the
+initramfs — i.e. a real distro in RAM on the phone, no UFS writes.
+
+How it was built (this host, no root):
+
+```sh
+# aarch64 root, solved natively and installed for aarch64 (scriptlets skipped:
+# their aarch64 %posts run under qemu and take tens of minutes each)
+docker run --rm --platform linux/amd64 -v /tmp/luma:/luma:ro -v /tmp/armroot3:/out \
+  fedora:44 dnf -y --installroot=/out --releasever=44 --forcearch=aarch64 \
+  --use-host-config --setopt=install_weak_deps=False --setopt=tsflags=noscripts \
+  install --skip-broken $(grep -vE '^\s*(#|$)' /luma/config/mobile/packages.txt) \
+  fedora-release systemd-udev util-linux kmod
+# then, in a root container:  usr/sbin + sbin symlink, /dev /proc /sys /run /tmp,
+# empty /etc/machine-id, dbus.service alias (lost with noscripts), users via
+# systemd-sysusers --root, the usbacm.service unit + serial-getty@ttyGS0 autologin
+tools/linux/pack-rootfs.sh   # or the same cpio/gzip inside the container
+```
+
+Remaining failures in that boot, all understood: `dbus.socket: service not
+loaded` (alias missing because the scriptlets were skipped — now created),
+`systemd-logind` FAILURE (follows from dbus), `modem.mdt failed with error -2`
+(no firmware partition mounted), `dpu_crtc_atomic_flush: crtc pending` on the
+DPU, and `snd-sm8250: MultiMedia1: error getting cpu dai name`.
+
+`tools/linux/usbacm.c` brings the CDC-ACM gadget up from systemd
+(`usbacm.service`, stays resident) and `serial-getty@ttyGS0` autologs root, so
+the Fedora userspace is reachable over the same USB cable (1d6b:0104).
