@@ -1,0 +1,11 @@
+[Unit]
+Description=Enable remoteproc coredumps (modem/ADSP crash forensics)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rproc-coredump.sh
+
+[Install]
+WantedBy=multi-user.target

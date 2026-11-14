@@ -699,3 +699,24 @@ Next lever, unexplored: **remoteproc coredump** — the kernel exposes
 reset, the same data the vendor's rawdump carries. Capturing it and symbolising
 against the `modem.bNN` segments from the modem partition is how the stalled PD
 gets named.
+
+### Wi-Fi, third pass: PD map does carry `wlan_pd`; coredump stays empty
+
+- `modemuw.jsn` (found and served by pd-mapper) declares
+  `"subdomain": "wlan_pd"` with `"provider": "wlan"` — so the modem *can*
+  resolve the WLAN PD; `modemr.jsn` only carries the `modem` root domain
+  (`qmi_instance_id` 180). Nothing is missing from the map.
+- `ath10k_snoc` is **bound** to `18800000.wifi` (not in `devices_deferred`, only
+  `sound` is) — it sits inside probe waiting for the WLFW QMI service, exactly
+  as designed.
+- The modem still DOGs 3× per boot (`dog_hal_common.c:180`), and **neither
+  rmtfs (with `-v`) nor tqftpserv logs a single request** — the stall is before
+  any host-service exchange.
+- `rproc-coredump.service` (new) enables
+  `/sys/kernel/debug/remoteproc/remoteprocN/coredump` at boot, but after the
+  watchdog crashes the file stays **0 bytes**: the q6v5_pas dump path does not
+  produce a dump for this crash (it needs the segments to still be mapped when
+  recovery runs). Capturing the modem's memory that way would need work inside
+  the driver's dump path, or the vendor's rawdump.
+- Everything needed to reach the phone while iterating is in place:
+  `ssh -i /tmp/picasso_key root@fe80::11:22ff:fe33:4455%enx021122334466`.
