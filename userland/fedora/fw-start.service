@@ -1,0 +1,13 @@
+[Unit]
+Description=Start the DSPs and the modem (needs firmware + PD map)
+After=fw-mount.service pd-mapper.service rmtfs.service tqftpserv.service
+Wants=fw-mount.service pd-mapper.service rmtfs.service tqftpserv.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/local/bin/fw-start.sh
+
+[Install]
+WantedBy=multi-user.target

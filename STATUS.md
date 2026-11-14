@@ -668,3 +668,34 @@ declares only the `modem` domain (no `wlan` entry; the WLAN PD is a *subdomain*
 of the modem), so the remaining work is the modem's init sequence itself, not
 the map's presence. That is the same class of problem the XNU port hit as
 "WLFW never registers".
+
+### Wi-Fi, continued: the modem dies before it talks to the host
+
+Ordering is now right, and the evidence points inside the modem:
+
+1. `fw-mount.service` (new, `Before=pd-mapper rmtfs tqftpserv`) mounts the
+   Android `modem`/`dsp`/`bluetooth` partitions, links the `image/*` files into
+   `/lib/firmware` (board.bin for ath10k included) **and** into
+   `/var/lib/tqftpserv/{readonly,readwrite}` (327 files) — so pd-mapper now
+   finds all six PD maps on its **first** start (before: it started with nothing
+   mounted, failed, and restarted after the modem was already up).
+2. `fw-start.service` then unbinds/binds `qcom_q6v5_pas` (after a 3 s settle)
+   and starts the modem; `rmtfs` runs with `-v` over the seeded EFS.
+3. Result: `remoteproc1: remote processor modem is now up` — and then, ~40 s
+   later, `qcom_q6v5_pas 4080000.remoteproc: watchdog received:
+   dog_hal_common.c:180:DOG detects stalled initialization` (a *different* dog
+   from the ADSP's `sensor_process` one). 3 such DOGs per boot; both remotes end
+   up `offline`.
+4. **Neither `rmtfs` nor `tqftpserv` ever logs a request** (`rmtfs -v` included)
+   → the modem stalls *before* it asks the host for EFS, the PD map or TFTP
+   files, so the host-side stack is not the gate any more.
+5. One earlier boot did reach `69 1 0 0 93 ATH10k WLAN firmware service` and
+   `ath10k_snoc: qmi chip_id 0x320 … fw_version 0x321b002a … WLAN.HL.3.2.1.c2`,
+   so everything above the modem is correct.
+
+Next lever, unexplored: **remoteproc coredump** — the kernel exposes
+`/sys/kernel/debug/remoteproc/remoteproc1/coredump`
+(+ `crash`, `carveout_memories`), i.e. the modem's memory after the watchdog
+reset, the same data the vendor's rawdump carries. Capturing it and symbolising
+against the `modem.bNN` segments from the modem partition is how the stalled PD
+gets named.
