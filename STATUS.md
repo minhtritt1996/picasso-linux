@@ -340,3 +340,32 @@ Two real bugs, both proven on hardware:
 Result on hardware: console text on screen, framebuffer noise, then the
 red/green/blue timeline. Display bring-up is done for the current (DSC native,
 120 Hz) configuration; DSC-off 60 Hz also works as a fallback fork.
+
+### Audio — amp path works end to end, no sound yet, ADSP watchdog is the wall
+
+Verified on hardware (2026-11-14):
+
+- **TLMM access model.** Kernel `ioremap` writes to the vendor tile windows work
+  (0xf100000 + SOUTH 0x100000 / WEST 0x500000 / EAST 0x900000); the *same*
+  writes through `/dev/mem` (Normal-NC, merging) stall the bus and lose a CPU.
+  Never debug TLMM with `/dev/mem` writes — use a kernel driver.
+- **Pin mux** (`drivers/soc/qcom/picasso-pinmux.c`, runs before GENI probes):
+  uart5 38-41 (east), i2c8 49/50 (west), secondary MI2S 70/71/72/74 (west,
+  function 1, 8 mA) and the amp reset gpio58 (west, GPIO, output).
+- **Amp reset polarity**: the TFA9874 reset is **active high** and idles low
+  (vendor: `GPIOF_OUT_INIT_LOW`, pulses 1 → 0). Driving it high holds the amp
+  in reset and every i2c read NAKs (`-ENXIO: failed to read revision`).
+  The DT now uses `GPIO_ACTIVE_HIGH`.
+- With reset released the amp answers on i2c8 (0x34), the card binds, the route
+  `SEC_MI2S_RX Audio Mixer MultiMedia1` is set, `hw_params` and PCM `write`
+  succeed, and the amp reports `status 0x0017 clk 0xe2c2 sys 0x0018`
+  (CLKS stable, AMPE+DCA on) with 16-bit/32-BCK TDM config. No audible output
+  yet: either the DSP is not putting samples on the wire or the amp is fed from
+  the other data line.
+- **ADSP watchdog**: `qcom_q6v5_pas ... fatal error: err_qdi.c:1045:
+  EF:sensor_process:0x1 ... USER-PD DOG detects stalled initialization`
+  kills and recovers the ADSP every ~20 s on its own, which also tears down any
+  audio stream (`ASoC error (-5)`, `fail to close AFE port`). The sensor PD
+  inside the Xiaomi ADSP image never finishes init — the usual cause is the
+  missing rmtfs/pd-mapper services that the DSP expects. Playing the tone
+  within the first seconds after boot succeeds without the crash.

@@ -1108,6 +1108,115 @@ static void cmd(int fd, char *line)
 			close(ffd);
 			dprintf(fd, "fbsum: nonzero words in first 256K = %u\n", nz);
 		}
+	} else if (!strncmp(line, "mmiow", 5)) {
+		char *arg = line + 5;
+		unsigned long addr = strtoul(arg, &arg, 0);
+		unsigned long val = strtoul(arg, &arg, 0);
+		int mfd;
+		long pg = sysconf(_SC_PAGESIZE);
+		volatile unsigned int *p;
+
+		mfd = open("/dev/mem", O_RDWR);
+		if (mfd < 0) {
+			dprintf(fd, "mmiow: %m\n");
+		} else {
+			unsigned long page = addr & ~(unsigned long)(pg - 1);
+
+			p = (volatile unsigned int *)mmap(NULL, pg, PROT_READ | PROT_WRITE,
+							  MAP_SHARED, mfd, (off_t)page);
+			if (p == MAP_FAILED) {
+				dprintf(fd, "mmiow: mmap %m\n");
+			} else {
+				unsigned long off = (addr - page) / 4;
+				int cpid = fork();
+
+				/* the write runs in a child: a bus stall then costs
+				 * one process, not the console */
+				if (cpid == 0) {
+					p[off] = (unsigned int)val;
+					_exit(0);
+				}
+				dprintf(fd, "mmiow %08lx := %08x in pid %d\n",
+					addr, (unsigned int)val, cpid);
+				munmap((void *)p, pg);
+			}
+			close(mfd);
+		}
+	} else if (!strncmp(line, "tinfo", 5)) {
+		char path[64];
+		int pid = atoi(line + 5);
+		int tfd;
+
+		snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+		tfd = open(path, O_RDONLY);
+		if (tfd >= 0) {
+			char buf[512];
+			ssize_t n = read(tfd, buf, sizeof(buf) - 1);
+
+			if (n > 0) {
+				buf[n] = 0;
+				dprintf(fd, "stat: %s\n", buf);
+			}
+			close(tfd);
+		}
+		snprintf(path, sizeof(path), "/proc/%d/stack", pid);
+		tfd = open(path, O_RDONLY);
+		if (tfd < 0) {
+			dprintf(fd, "no stack: %m\n");
+		} else {
+			char buf[1024];
+			ssize_t n = read(tfd, buf, sizeof(buf) - 1);
+
+			if (n > 0) {
+				buf[n] = 0;
+				dprintf(fd, "stack:\n%s\n", buf);
+			}
+			close(tfd);
+		}
+	} else if (!strncmp(line, "pinmux", 6)) {
+		/* pinmux 72 sec_mi2s : via debugfs, i.e. the kernel's own
+		 * ioremap/MT_DEVICE path, unlike /dev/mem */
+		char arg[128];
+		char path[256];
+		char sel[160];
+		DIR *d;
+		int done = 0;
+
+		snprintf(arg, sizeof(arg), "%s", line + 6);
+		if (mount("debugfs", "/sys/kernel/debug", "debugfs", 0, NULL) &&
+		    errno != EBUSY)
+			dprintf(fd, "pinmux: debugfs mount: %m\n");
+		d = opendir("/sys/kernel/debug/pinctrl");
+		if (!d) {
+			dprintf(fd, "pinmux: %m\n");
+		} else {
+			struct dirent *e;
+
+			while ((e = readdir(d))) {
+				int wfd;
+
+				if (e->d_name[0] == '.')
+					continue;
+				snprintf(path, sizeof(path),
+					 "/sys/kernel/debug/pinctrl/%s/pinmux-select",
+					 e->d_name);
+				wfd = open(path, O_WRONLY);
+				if (wfd < 0)
+					continue;
+				snprintf(sel, sizeof(sel), "%s\n", arg);
+				if (write(wfd, sel, strlen(sel)) < 0)
+					dprintf(fd, "pinmux %s: %m\n", arg);
+				else {
+					dprintf(fd, "pinmux %s ok via %s\n", arg,
+						e->d_name);
+					done = 1;
+				}
+				close(wfd);
+				if (done)
+					break;
+			}
+			closedir(d);
+		}
 	} else if (!strcmp(line, "uname")) {
 		struct utsname u;
 
@@ -1292,7 +1401,8 @@ int main(void)
 			rs = 300;
 		if (rs > 0 && fork() == 0) {
 			sleep((unsigned)rs);
-			klog("picasso-init: auto_reboot after %d s\n", rs);
+			/* no klog here: a stuck console write must not hold up
+			 * the reset path */
 			sync();
 			/* device shutdown hangs on some blocks here; sysrq-b restarts
 			 * without running the shutdown handlers */
