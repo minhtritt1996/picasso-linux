@@ -169,6 +169,24 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   loader.efi + usb and no kernel), because the loader only serves fastboot while
   it waits before `oem run`.
 
+### TLMM probe result: the EAST/WEST windows ARE readable
+
+- Kernel-side `ioremap + readl` initcalls (temporary, in the printk patch):
+  - `0xf526000` (WEST, gpio38 ctl area) -> `0x00000000`, mapped;
+  - `0xf926000` (EAST, gpio38 under the vendor offset) -> `0x00000001`, mapped.
+  Both boots reached init with the USB gadget up, so there is **no XPU or
+  hypervisor block** on those windows.
+- Therefore every earlier "multi-tile" crash is a **software bug** in the
+  pinctrl/gpiochip path, not the address map, and the flat vendor layout
+  (one window from 0xf100000 with SOUTH 0 / WEST 0x400000 / EAST 0x800000) is
+  the correct target - it still dies before init today, so the next step is to
+  find what the driver does differently when all groups share one tile
+  (watch `msm_gpio_get_direction` in the gpiochip-add loop and the SDC/UFS
+  groups whose ctl offsets are absolute).
+- Quick unblock path if that takes too long: a small late_initcall that writes
+  the handful of mux registers directly (BT gpio38-41 qup05 + gpio73, amp
+  gpio49/50 qup12), bypassing pinctrl entirely, to prove BT/amp on hardware.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at
