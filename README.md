@@ -85,6 +85,27 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
 ```
 
 `reboot` returns to the loader (the boot image is installed on the `boot` partition).
+
+### A root filesystem bigger than the payload
+
+The 63 MiB payload holds `linux.efi` + `Image` + `dtb`; a real userspace does not fit there.
+XnuLoader's *resident ramdisk* does: `oem ramdisk` makes the next download land at
+`win_base + 0x08000000` and the loader patches `/chosen/linux,initrd-start|end` in place, so
+the kernel gets it as initrd.
+
+```sh
+PAYLOAD_NO_INITRD=1 ./build.sh bootimg        # payload without an initrd entry
+fastboot oem ramdisk
+fastboot stage rootfs.cpio.gz                 # up to ~1.1 GiB with the 2 GiB window
+fastboot stage build/out/payload-linux.bin
+fastboot oem run
+```
+
+The loader caps the window it claims for Linux payloads at 2 GiB; without that cap it claims
+the largest free block (~5 GiB), the firmware runs out of memory to load the kernel and the
+phone resets before printing anything. Diagnostics: `fastboot getvar result` (`linux-fail N`),
+`fastboot oem log` + `fastboot get_staged log.txt`, `fastboot oem ramoops` (the kernel's RAM
+console) and `fastboot oem screenshot` (raw framebuffer, `getvar screen` gives the geometry).
 The kernel also mirrors its console into RAM (`0xF3F00000`); the loader copies that
 into its log at start-up, so `fastboot get_staged` after any reset contains the last
 kernel boot (and `logdump` keeps it on UFS).
