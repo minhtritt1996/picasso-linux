@@ -369,3 +369,24 @@ Verified on hardware (2026-11-14):
   inside the Xiaomi ADSP image never finishes init — the usual cause is the
   missing rmtfs/pd-mapper services that the DSP expects. Playing the tone
   within the first seconds after boot succeeds without the crash.
+
+### Buttons — all three work (2026-11-14)
+
+`dmesg input` after the fix:
+
+| device | input node | key code | button |
+| --- | --- | --- | --- |
+| `pm8941_pwrkey` | `.../pon@800/pwrkey` | 116 `KEY_POWER` | power (KPDPWR_N of the PM8150 PON) |
+| `pm8941_resin` | `.../pon@800/resin` | 114 `KEY_VOLUMEDOWN` | volume down (RESIN_N) |
+| `gpio-keys` | `gpio-keys` | 115 `KEY_VOLUMEUP` | volume up (PM8150L GPIO5, pull-up) |
+
+Verified by pressing each key twice and reading every `/dev/input/event*`
+(`keys 40` in the initramfs console): each produced a DOWN/up pair on the right
+device with the right code.
+
+The one non-obvious dependency: the pwrkey/resin children get their regmap from
+the `pon@800` node, so **`CONFIG_POWER_RESET_QCOM_PON` must be built in** (it
+was `=m`, and the RAM initramfs has no module loader — with it missing both
+children stayed unbound and no power/volume-down key ever appeared). Enabling
+`CONFIG_RTC_DRV_PM8XXX=y` instead hangs the boot before the console; that
+driver is not needed for the keys.

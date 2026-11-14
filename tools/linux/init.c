@@ -8,6 +8,8 @@
  */
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <sys/ioctl.h>
+#include <linux/input.h>
 #include <stdlib.h>
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
@@ -1217,6 +1219,51 @@ static void cmd(int fd, char *line)
 			}
 			closedir(d);
 		}
+	} else if (!strncmp(line, "keys", 4)) {
+		/* keys N: print key events from every input device for N s */
+		int secs = atoi(line + 4);
+		struct pollfd pfd[8];
+		int nfd = 0, i, end;
+
+		if (secs <= 0)
+			secs = 10;
+		for (i = 0; i < 8; i++) {
+			char path[48], name[80] = "?";
+			int efd;
+
+			snprintf(path, sizeof(path), "/dev/input/event%d", i);
+			efd = open(path, O_RDONLY | O_NONBLOCK);
+			if (efd < 0)
+				continue;
+			if (ioctl(efd, EVIOCGNAME(sizeof(name) - 1), name) > 0)
+				name[sizeof(name) - 1] = 0;
+			dprintf(fd, "keys: event%d = %s\n", i, name);
+			pfd[nfd].fd = efd;
+			pfd[nfd].events = POLLIN;
+			nfd++;
+		}
+		end = (int)time(NULL) + secs;
+		while ((int)time(NULL) < end) {
+			if (poll(pfd, nfd, 20) <= 0)
+				continue;
+			for (i = 0; i < nfd; i++) {
+				struct input_event ev;
+
+				if (!(pfd[i].revents & POLLIN))
+					continue;
+				while (read(pfd[i].fd, &ev, sizeof(ev)) == sizeof(ev)) {
+					if (ev.type != EV_KEY)
+						continue;
+					dprintf(fd, "  event%d: code %u %s\n", i,
+						ev.code,
+						ev.value == 0 ? "up" :
+						ev.value == 1 ? "DOWN" : "repeat");
+				}
+			}
+		}
+		for (i = 0; i < nfd; i++)
+			close(pfd[i].fd);
+		dprintf(fd, "keys: done\n");
 	} else if (!strcmp(line, "uname")) {
 		struct utsname u;
 
