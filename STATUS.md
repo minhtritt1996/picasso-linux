@@ -753,3 +753,34 @@ Fedora's and Debian's `linux-firmware` packages, and this host's own
 `/lib/firmware` all contain `QCA-ATH10K` pointer stubs. A real copy (≈1.3 MB)
 has to come from a linux-firmware release tarball or a machine that still has
 the pre-LFS blob; drop it in and `wlan0` should appear.
+
+### Wi-Fi WORKS: wlan0 up, scanning real access points
+
+Two more pieces after the PD-map fix:
+
+1. **`firmware-5.bin`** (WCN3990, `ath10k/WCN3990/hw1.0/`) is a **60-byte file**
+   whose content *is* the firmware header (`QCA-ATH10K\0` + TLV entries) — not a
+   git-LFS pointer, which is what every copy looked like at first glance.
+   Shipped in `prebuilt/fw-wcn3990/` and installed into the rootfs; after that:
+   `wcn3990 hw1.0 target 0x00000008`, `firmware ver  api 5 … crc32 b3d4b790`,
+   `htt-ver 3.81 … hwcrypto 1`, `invalid MAC address; choosing random`, and
+   **`wlan0`** exists (`phy0` registered).
+2. `wpa_supplicant` + `iw` in the userspace image (NM needs the supplicant; the
+   package list had neither).
+
+`iw dev wlan0 scan` returns live access points:
+
+| SSID | best signal |
+| --- | --- |
+| <ssid> | −46 dBm |
+| <ssid> | −46 dBm |
+| (hidden) | −67 dBm |
+| VIETTEL_2dH95J | −69 dBm |
+| SCADA-INDUSTRIES | −81 dBm |
+| <ssid> | −86 dBm |
+| vivo Y53s | −89 dBm |
+
+NetworkManager still reports `wlan0: unmanaged` (it was started before
+wpa_supplicant existed and does not pick the device up afterwards), so
+connecting is done directly with `wpa_supplicant` next; `sshd` already listens
+on 22 and the USB-ECM link keeps working meanwhile.
