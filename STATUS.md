@@ -419,3 +419,34 @@ its firmware re-flashed (the vendor driver carries nt36672c_g7a_fw0X.bin).
 
 Driver: `drivers/input/touchscreen/picasso-nvt-spi.c`, enabled with
 `CONFIG_TOUCHSCREEN_PICASSO_NVT=y`.
+
+### Resident ramdisk for Linux — loader support in place, boot still fails
+
+The loader (`build/loader/xnuloader/loader.c`, flashed into `boot` on 2026-11-14)
+now does what the XNU path always did, for Linux:
+
+- `boot_linux()` no longer requires an `initrd` entry. When the payload has none
+  and the host armed `oem ramdisk`, it takes the resident image at
+  `win_base + RESIDENT_RD_OFFSET` (`0x08000000`), patches
+  `/chosen/linux,initrd-start|end` **in place** (`patch_linux_initrd()`, an FDT
+  walker; the packer writes 8-byte zero placeholders so no resize is needed) and
+  boots. Capacity is `win_size - 0x08000000 - 0x30000000` ≈ 4.3 GiB.
+- Every early return sets a numbered reason, visible with
+  `fastboot getvar result` → `linux-fail N` (1 missing image/initrd/dtb,
+  2 /chosen patch, 3 install_configuration_table, 4 LoadImage).
+- `tools/linux/build-bootimg.py --initrd` is optional; `PAYLOAD_NO_INITRD=1
+  ./build.sh bootimg` builds such a payload (60 042 232 B).
+
+Verification so far: the flashed loader boots the normal payload (initrd inside
+the container) and the kernel comes up with its USB-ACM console. The resident
+flow (`oem ramdisk` + stage initrd + stage payload + `oem run`) makes the loader
+start the kernel, but the phone ends up back at the loader with no console and
+`result: idle`, i.e. a reset, not one of the numbered bails — so the /chosen
+patch is accepted and the kernel dies afterwards. Next: read the screen during
+that run (loader early-exception dump vs kernel text), and check whether the
+kernel sees the range as reserved (`dmesg | grep -i initrd` on a boot that
+reaches userspace).
+
+**Workspace invariant note:** the `boot` partition was written (user's explicit
+instruction) so loader changes take effect on `reboot`; the running system is
+still RAM-only apart from that one boot image.

@@ -98,7 +98,10 @@ def main():
     ap.add_argument('-o', '--output', required=True)
     ap.add_argument('--loader', required=True, help='linux.efi')
     ap.add_argument('--image', required=True, help='arm64 Image')
-    ap.add_argument('--initrd', required=True, help='initramfs cpio.gz')
+    ap.add_argument('--initrd', default='',
+                    help='initramfs cpio.gz; omit it to boot from the resident '
+                         'image ("fastboot oem ramdisk"), which the loader hands '
+                         'over through /chosen after rewriting the placeholders')
     ap.add_argument('--dtb', required=True, help='mainline board DTB')
     ap.add_argument('--uefi-fd', required=True, help='SILICIUM_UEFI.fd')
     ap.add_argument('--bootshim', required=True, help='BootShim.bin')
@@ -112,8 +115,8 @@ def main():
     ap.add_argument('--kernel-offset', default='0x8000')
     args = ap.parse_args()
 
-    for path in (args.loader, args.image, args.initrd, args.dtb, args.uefi_fd,
-                 args.bootshim, args.uefi_dtb):
+    for path in (args.loader, args.image, args.dtb, args.uefi_fd,
+                 args.bootshim, args.uefi_dtb) + ((args.initrd,) if args.initrd else ()):
         if not os.path.isfile(path):
             die(f'missing input: {path}')
     for tool in ('fdtput', 'mkbootimg'):
@@ -123,8 +126,11 @@ def main():
     check_pe(args.loader)
     check_pe(args.image)
 
-    blobs = [(name, open(path, 'rb').read()) for name, path in (
-        ('loader.efi', args.loader), ('Image', args.image), ('initrd', args.initrd), ('dtb', args.dtb))]
+    files = [('loader.efi', args.loader), ('Image', args.image)]
+    if args.initrd:
+        files.append(('initrd', args.initrd))
+    files.append(('dtb', args.dtb))
+    blobs = [(name, open(path, 'rb').read()) for name, path in files]
     if not args.no_usb:
         # "usb" makes the loader stay resident and serve fastboot instead of
         # booting at once: the xnuloader iteration channel.
@@ -137,19 +143,22 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         dtb = os.path.join(tmp, 'board.dtb')
         open(dtb, 'wb').write(dict(blobs)['dtb'])
-        initrd_start = addrs['initrd']
-        patch_dtb(dtb, initrd_start, initrd_start + len(dict(blobs)['initrd']), args.cmdline)
+        initrd_start = addrs.get('initrd', 0)
+        initrd_size = len(dict(blobs)['initrd']) if args.initrd else 0
+        # without an initrd the two cells are 0 placeholders: the loader
+        # rewrites them in place with the resident image's address
+        patch_dtb(dtb, initrd_start, initrd_start + initrd_size, args.cmdline)
         patched_dtb = open(dtb, 'rb').read()
         if len(patched_dtb) > len(dict(blobs)['dtb']):
             # dtb is the last entry, so a growth only changes the payload size
             pass
-        payload = build_payload([
-            ('loader.efi', dict(blobs)['loader.efi']),
-            ('Image', dict(blobs)['Image']),
-            ('initrd', dict(blobs)['initrd']),
-            ('dtb', patched_dtb),
-            ('kernel.ver', b'picasso-mainline\0'),
-        ] + ([] if args.no_usb else [('usb', b'1\0')]))
+        entries = [('loader.efi', dict(blobs)['loader.efi']),
+                   ('Image', dict(blobs)['Image'])]
+        if args.initrd:
+            entries.append(('initrd', dict(blobs)['initrd']))
+        entries += [('dtb', patched_dtb), ('kernel.ver', b'picasso-mainline\0')]
+        entries += [] if args.no_usb else [('usb', b'1\0')]
+        payload = build_payload(entries)
         if len(payload) > PAYLOAD_MAX - PAYLOAD_RESERVED:
             die(f'payload is {len(payload)} bytes, limit is {PAYLOAD_MAX - PAYLOAD_RESERVED}')
         if args.payload_out:
@@ -178,10 +187,14 @@ def main():
     total = os.path.getsize(args.output)
     print(f'{args.output}: {total} bytes')
     print(f'  payload {len(payload)} / {PAYLOAD_MAX - PAYLOAD_RESERVED} bytes (XNUP at 0x{PAYLOAD_BASE:x})')
-    for name in ('loader.efi', 'Image', 'initrd', 'dtb'):
+    for name in ('loader.efi', 'Image') + (('initrd',) if args.initrd else ()) + ('dtb',):
         data = dict(blobs)[name] if name != 'dtb' else patched_dtb
         print(f'  {name:<10} {len(data):>10} bytes @ 0x{addrs[name]:x}')
-    print(f'  initrd 0x{initrd_start:x}..0x{initrd_start + len(dict(blobs)["initrd"]):x} in /chosen')
+    if args.initrd:
+        print(f'  initrd 0x{initrd_start:x}..0x{initrd_start + len(dict(blobs)["initrd"]):x} in /chosen')
+    else:
+        print('  no initrd in the payload: /chosen placeholders, the loader fills '
+              'them from the resident image (oem ramdisk)')
     print(f'  mode: {"fastboot listener (usb entry)" if not args.no_usb else "one-shot boot"}')
 
 

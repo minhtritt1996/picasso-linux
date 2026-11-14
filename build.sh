@@ -154,19 +154,23 @@ build_loader() {
 }
 
 build_bootimg() {
-	local fd="${UEFI_FD:-}" shim="${BOOTSHIM:-}" udtb="${UEFI_DTB:-}" extra=()
+	local fd="${UEFI_FD:-}" shim="${BOOTSHIM:-}" udtb="${UEFI_DTB:-}" extra=() initrd_arg=()
 	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
 	[ -f "$OUT/linux.efi" ] || die "run ./build.sh loader first"
 	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
-	[ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/linux/mkinitramfs.sh" >/dev/null
+	[ -n "${PAYLOAD_NO_INITRD:-}" ] || [ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/linux/mkinitramfs.sh" >/dev/null
 	[ -f "$fd" ] || die "set UEFI_FD=/path/to/SILICIUM_UEFI.fd"
 	[ -f "$shim" ] || die "set BOOTSHIM=/path/to/BootShim.bin"
 	[ -f "$udtb" ] || die "set UEFI_DTB=/path/to/picasso.dtb"
 	[ -n "${CMDLINE:-}" ] && extra=(--cmdline "$CMDLINE")
+	# PAYLOAD_NO_INITRD=1: no initrd in the container; Linux boots the resident
+	# image sent with "fastboot oem ramdisk" (the loader patches /chosen)
+	[ -n "${PAYLOAD_NO_INITRD:-}" ] || initrd_arg=(--initrd "$OUT/initrd.cpio.gz")
 	python3 "$ROOT/tools/linux/build-bootimg.py" \
 		-o "$OUT/boot-linux.img" --payload-out "$OUT/payload-linux.bin" \
 		--loader "$OUT/linux.efi" --image "$OUT/Image" \
-		--initrd "$OUT/initrd.cpio.gz" --dtb "$OUT/sm7250-xiaomi-picasso.dtb" \
+		"${initrd_arg[@]}" \
+		--dtb "$OUT/sm7250-xiaomi-picasso.dtb" \
 		--uefi-fd "$fd" --bootshim "$shim" --uefi-dtb "$udtb" "${extra[@]}"
 }
 
