@@ -42,10 +42,12 @@ for p in modem dsp; do
 	done
 done
 
-mount_ro bluetooth /usr/lib/firmware-android-bt && for f in /usr/lib/firmware-android-bt/*; do
-	[ -f "$f" ] || continue
-	ln -sf "$f" "$BT/$(basename "$f")"
-done
+if mount_ro bluetooth /usr/lib/firmware-android-bt; then
+	for f in /usr/lib/firmware-android-bt/* /usr/lib/firmware-android-bt/image/*; do
+		[ -f "$f" ] || continue
+		ln -sf "$f" "$BT/$(basename "$f")"
+	done
+fi
 
 # the WCN3990 board data: ath10k looks in ath10k/WCN3990/hw1.0/board.bin
 [ -e "$IMG/bdf_g7a.bin" ] && ln -sf "$IMG/bdf_g7a.bin" /lib/firmware/ath10k/WCN3990/hw1.0/board.bin

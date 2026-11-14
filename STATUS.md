@@ -804,3 +804,34 @@ The profile is baked into the image (`userland/fedora/<ssid>.nmconnection`,
 `/etc/NetworkManager/system-connections/`, mode 600, autoconnect) and
 `NetworkManager.service` is enabled, so a freshly booted phone joins the
 network by itself and is reachable over Wi-Fi as well as over the USB-ECM link.
+
+### Bluetooth (WCN3991 on UART SE5): hci0 comes up, the chip stays silent
+
+Enabling it properly this time (the earlier notes had the pieces scattered):
+
+- `&uart5` (`serial@894000`) enabled with a **`serial1` alias** — without it
+  `qcom_geni_serial: Invalid line -19` and nothing binds.
+- `bluetooth { compatible = "qcom,wcn3991-bt"; … }` child (the chip reports SOC
+  0x40010320, so binding it as wcn3990 makes even the version read time out),
+  four rails `vddio=s4a 1.8`, `vddxo=l14a 1.8`, `vddrf=l2c 1.3`,
+  `vddch0=l10c 3.3`, `max-speed=3200000`, `swctrl-gpios = <&tlmm 73>`, and
+  `firmware-name = "qca/crnv32.bin", "qca/crbtfw32.tlv"` (order: NVM, patch).
+- The RX wake interrupt on gpio41 that the SoC dtsi adds is removed (avicii's
+  note: it must not be on that pad).
+- `fw-mount.sh` now also links the **`bluetooth` partition's `image/*`** into
+  `/lib/firmware/qca` (it only linked the top level before, so the files were
+  missing even though the vfat mounted).
+- `picasso-pinmux.c` gained per-pad bias and muxes gpio38-41 with the vendor's
+  bias (CTS/RX none, RTS pull-down, TX pull-up) plus gpio73 as a SW_CTRL input.
+
+State now: `hci0` exists, serdev bound (`serial0-0`), all four rails enabled
+(regulator_summary shows use counts 1-2 at the right voltages), but the chip
+never answers the QCA vendor command: `command 0xfc00 tx timeout` →
+`Reading QCA version information failed (-110)`, three retries, every boot.
+
+Next, in order: (1) scope-free check of the pad states — read back gpio38-41 and
+gpio73 ctl/io through the early-mux driver on boot and compare against the
+vendor's `qup_uart5_*`/`bt_sw_ctrl` states; (2) try the vendor's reset
+convention (assert SW_CTRL low 50 ms, then high) instead of an input; (3) drop
+the early-mux bias/drive changes back to the exact values of the run where the
+version read did succeed, to see whether that run is reproducible at all.
