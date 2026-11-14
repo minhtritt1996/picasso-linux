@@ -92,5 +92,14 @@ for f in "$IMG"/*; do
 	ln -sf "$f" "/var/lib/tqftpserv/readwrite/$(basename "$f")"
 done
 
+# The Bluetooth serdev probes at ~0.6 s and asks for qca/crbtfw32.tlv a few
+# seconds later, before this service has linked the bluetooth partition. Bind
+# the UART again so the QCA setup runs a second time with the firmware there.
+if [ -e /sys/bus/serial/devices/serial0-0 ]; then
+	echo 894000.serial > /sys/bus/platform/drivers/qcom_geni_serial/unbind 2>/dev/null || true
+	sleep 1
+	echo 894000.serial > /sys/bus/platform/drivers/qcom_geni_serial/bind 2>/dev/null || true
+fi
+
 echo "fw-mount: $(ls "$IMG" | wc -l) firmware files (mounted image dir: $(readlink "$FW/image"))"
 exit 0

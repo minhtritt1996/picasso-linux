@@ -835,3 +835,45 @@ vendor's `qup_uart5_*`/`bt_sw_ctrl` states; (2) try the vendor's reset
 convention (assert SW_CTRL low 50 ms, then high) instead of an input; (3) drop
 the early-mux bias/drive changes back to the exact values of the run where the
 version read did succeed, to see whether that run is reproducible at all.
+
+### Bluetooth: firmware download completes at last — root cause was the missing `picasso_pinmux.mode=write`
+
+```
+Bluetooth: hci0: setting up wcn399x
+Bluetooth: hci0: QCA Product ID :0x0000000a, SOC 0x40010320, ROM 0x00000302, Patch 0x00000de9
+Bluetooth: hci0: QCA Downloading qca/crbtfw32.tlv
+Bluetooth: hci0: QCA Downloading qca/crnv32.bin
+Bluetooth: hci0: QCA FW build version: BTFM.CHE.3.2.1-00174-QCACHROMZ-1.372365.1
+Bluetooth: hci0: QCA setup on UART is completed
+```
+
+The `... setup on UART is completed` line is the milestone: the patch and the NVM
+were downloaded and the controller ACKed. Three separate things had to line up:
+
+1. **`picasso_pinmux.mode=write` must be in the cmdline.** The Fedora payload
+   cmdline had lost it, so the early-mux driver ran in its default *read* mode:
+   the UART pads 38-41 (and every other east/west pad: touch, amp reset, I2S)
+   still held the loader's state and the BT chip saw no UART. Register readback
+   showed `mux=0` on gpio40/41 — that is what gave it away.
+2. **The firmware name must not repeat the driver's own prefix**: the driver
+   builds `qca/<firmware-name>`, so `firmware-name = "crnv32.bin",
+   "crbtfw32.tlv"` (with `qca/…` it asks for `qca/qca/…` and fails -ENOENT).
+3. **The firmware has to be there before the first setup**: the serdev probes at
+   ~0.6 s and asks for the TLV at ~5 s, while `fw-mount` links the phone's
+   `bluetooth` partition at multi-user. `fw-mount.sh` now unbinds/binds
+   `894000.serial` at the end, so the second setup runs with the files in place
+   (that is the 21 s "setting up wcn399x" in the log).
+
+Also needed: `serial1 = &uart5` alias (`geni-serial: Invalid line -19`
+otherwise), `compatible = "qcom,wcn3991-bt"` (as wcn3990 even the version read
+times out), the four rails, `swctrl-gpios = <&tlmm 73>`, and no RX wake IRQ on
+gpio41.
+
+Remaining: `hci0` exists in sysfs but the kernel never finishes registering it
+(`btmgmt` “Index list with 0 items”, `bluetoothctl list` empty; one
+`Frame reassembly failed (-84)` at setup). Next: follow `hci_register_dev` in
+`hci_uart_setup` (the 0xFD wake byte is already dropped in `qca_recv`, so look
+at the HCI reset/`HCI_QUIRK` path and the `-84` frame).
+
+Meanwhile, the USB-ACM console wedged again during the bluetoothd start; the
+phone is reachable over Wi-Fi (NM leased <lan-ip> this boot).
