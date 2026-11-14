@@ -1,11 +1,16 @@
 #!/bin/sh
-# Mount the phone's Android firmware partitions read-only and link the files the
-# kernel drivers ask for.  This must happen *before* pd-mapper starts: it reads
-# its PD maps from /lib/firmware, and a first start with nothing mounted leaves
-# it without maps (it then restarts, too late for the modem).
+# Mount the phone's Android firmware partitions read-only and build the single
+# firmware directory the kernel drivers and pd-mapper look at:
+#
+#   /lib/firmware/qcom/sm7250/xiaomi/picasso/image -> /run/fw-image  (tmpfs)
+#
+# The image directory is a tmpfs of symlinks rather than the mounted ext4
+# itself because pd-mapper only scans that directory, and this port has to add
+# PD maps the vendor's files do not carry (see the tms/pddump_disabled block).
 set -u
 
 FW=/lib/firmware/qcom/sm7250/xiaomi/picasso
+IMG=/run/fw-image
 BT=/lib/firmware/qca
 
 # udev creates /dev/disk/by-partlabel asynchronously; wait for it
@@ -27,63 +32,63 @@ mount_ro() {
 	return 1
 }
 
-mkdir -p "$FW/image" "$BT"
-# ath10k_snoc asks for <dir>/<board_name>/<file> with board_name = the DT's
-# "firmware-name" ("picasso"), and the WCN3990 board/firmware files live on the
-# modem partition next to wlanmdsp.mbn
-mkdir -p /lib/firmware/ath10k/picasso /lib/firmware/ath10k/WCN3990/hw1.0
+mkdir -p "$FW" "$IMG" "$BT" /lib/firmware/ath10k/picasso /lib/firmware/ath10k/WCN3990/hw1.0
 
 for p in modem dsp; do
-	if mount_ro "$p" "/usr/lib/firmware-android-$p"; then
-		if [ -d "/usr/lib/firmware-android-$p/image" ]; then
-			for f in "/usr/lib/firmware-android-$p/image"/*; do
-				[ -f "$f" ] || continue
-				ln -sf "$f" "$FW/image/$(basename "$f")"
-			done
-		fi
-	fi
+	mount_ro "$p" "/usr/lib/firmware-android-$p" || continue
+	for f in "/usr/lib/firmware-android-$p/image"/*; do
+		[ -f "$f" ] || continue
+		ln -sf "$f" "$IMG/$(basename "$f")"
+	done
 done
 
-if mount_ro bluetooth /usr/lib/firmware-android-bt; then
-	for f in /usr/lib/firmware-android-bt/*; do
-		[ -f "$f" ] || continue
-		ln -sf "$f" "$BT/$(basename "$f")"
-	done
-	[ -d /usr/lib/firmware-android-bt/image ] && for f in /usr/lib/firmware-android-bt/image/*; do
-		[ -f "$f" ] || continue
-		ln -sf "$f" "$BT/$(basename "$f")"
-	done
-fi
+mount_ro bluetooth /usr/lib/firmware-android-bt && for f in /usr/lib/firmware-android-bt/*; do
+	[ -f "$f" ] || continue
+	ln -sf "$f" "$BT/$(basename "$f")"
+done
 
-for f in "$FW/image"/bdwlan* "$FW/image"/bdf_*.bin; do
+# the WCN3990 board data: ath10k looks in ath10k/WCN3990/hw1.0/board.bin
+[ -e "$IMG/bdf_g7a.bin" ] && ln -sf "$IMG/bdf_g7a.bin" /lib/firmware/ath10k/WCN3990/hw1.0/board.bin
+for f in "$IMG"/bdwlan* "$IMG"/bdf_*.bin; do
 	[ -e "$f" ] || continue
 	ln -sf "$f" "/lib/firmware/ath10k/picasso/$(basename "$f")"
 done
-# the WCN3990 board data: ath10k looks in ath10k/WCN3990/hw1.0/board.bin;
-# the Android bdf for this panel is bdf_g7a.bin (G7A) on the modem partition
-[ -e "$FW/image/bdf_g7a.bin" ] && \
-	ln -sf "$FW/image/bdf_g7a.bin" /lib/firmware/ath10k/WCN3990/hw1.0/board.bin
 
-for drv in qcom_q6v5_pas ath10k_snoc; do
-	[ -d /sys/bus/platform/drivers/$drv ] || continue
-	for d in /sys/bus/platform/drivers/$drv/*.*; do
-		[ -L "$d" ] || continue
-		base=$(basename "$d")
-		echo "$base" > /sys/bus/platform/drivers/$drv/unbind 2>/dev/null || true
-		sleep 0.2
-		echo "$base" > /sys/bus/platform/drivers/$drv/bind 2>/dev/null || true
-	done
-done
+# The Xiaomi PD maps carry tms/pdr_enabled and tms/servreg but *not*
+# tms/pddump_disabled, which the modem asks for right after boot: pd-mapper
+# answers 0 domains and the modem's PD watchdog then fires
+# (dog_hal_common.c:180).  Declare the missing service for each root PD.
+mk_tms() {
+	sub=$1; inst=$2; dom=$3
+	cat > "$IMG/tms-pddump-$dom-$sub.jsn" <<JSON
+{
+	"sr_domain": {
+		"soc": "msm",
+		"domain": "$dom",
+		"subdomain": "$sub",
+		"qmi_instance_id": $inst
+	},
+	"sr_service": [
+		{ "provider": "tms", "service": "pddump_disabled" }
+	]
+}
+JSON
+}
+mk_tms root_pd 180 modem
+mk_tms audio_pd 74 adsp
+mk_tms root_pd  76 cdsp
 
+# expose the tmpfs image dir where the drivers expect the mounted partition
+rm -rf "$FW/image"
+ln -sfn "$IMG" "$FW/image"
 
-# The modem-hosted WLAN fetches its board/firmware files from the AP over
-# TFTP (tqftpserv), which serves <statedir>/readonly and .../readwrite.
+# tqftpserv serves the same files to the modem
 mkdir -p /var/lib/tqftpserv/readonly /var/lib/tqftpserv/readwrite
-for f in "$FW/image"/*; do
-	[ -f "$f" ] || continue
+for f in "$IMG"/*; do
+	[ -e "$f" ] || continue
 	ln -sf "$f" "/var/lib/tqftpserv/readonly/$(basename "$f")"
 	ln -sf "$f" "/var/lib/tqftpserv/readwrite/$(basename "$f")"
 done
 
-echo "fw-mount: $(ls "$FW/image" 2>/dev/null | wc -l) firmware files, $(ls /var/lib/tqftpserv/readonly 2>/dev/null | wc -l) for tqftpserv"
+echo "fw-mount: $(ls "$IMG" | wc -l) firmware files (mounted image dir: $(readlink "$FW/image"))"
 exit 0

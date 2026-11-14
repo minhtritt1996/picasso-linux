@@ -720,3 +720,36 @@ gets named.
   the driver's dump path, or the vendor's rawdump.
 - Everything needed to reach the phone while iterating is in place:
   `ssh -i /tmp/picasso_key root@fe80::11:22ff:fe33:4455%enx021122334466`.
+
+### Wi-Fi: the modem blocker was a missing PD map entry — WLFW now comes up
+
+Found by making pd-mapper log *what the modem asks for* and *what it answers*
+(a 20-line patch to `pd-mapper.c`, built static and baked into the image):
+
+```
+request from node 5: 'tms/pdr_enabled'      -> 1 domain  (msm/modem/root_pd, 180)
+request from node 5: 'tms/pddump_disabled'  -> 0 domains   <-- here
+request from node 5: 'avs/audio'            -> 1 domain  (msm/adsp/audio_pd, 74)
+```
+
+Xiaomi's own PD maps carry `tms/pdr_enabled` and `tms/servreg` but **not**
+`tms/pddump_disabled`, so the modem got an empty list for it and its PD watchdog
+fired 3× per boot (`dog_hal_common.c:180`). `fw-mount.sh` now writes three extra
+maps (`tms-pddump-{modem,adsp,cdsp}-*.jsn`) into a **tmpfs copy of the image
+directory** (`/run/fw-image`, symlinked as `/lib/firmware/.../image`) — the
+mounted ext4 is read-only and pd-mapper only scans that directory — and things
+finally move:
+
+- modem stays **running** (one DOG left, from the ADSP's unrelated `sensor_process`)
+- `69 1 0 0 92 ATH10k WLAN firmware service` appears on QRTR
+- `ath10k_snoc: qmi chip_id 0x320 board_id 0xff soc_id 0x400b0000`,
+  `qmi fw_version 0x321b002a … WLAN.HL.3.2.1.c2` — the QMI handshake completes
+- `board.bin` (= `bdf_g7a.bin` from the modem partition) is accepted
+
+**Last missing artifact:** `ath10k/WCN3990/hw1.0/firmware-5.bin` (API-2/5 WMI
+metadata): `Failed to find firmware-N.bin (N between 2 and 6)`. Every local
+source ships it as a **60-byte LFS pointer** — kernel.org's linux-firmware repo,
+Fedora's and Debian's `linux-firmware` packages, and this host's own
+`/lib/firmware` all contain `QCA-ATH10K` pointer stubs. A real copy (≈1.3 MB)
+has to come from a linux-firmware release tarball or a machine that still has
+the pre-LFS blob; drop it in and `wlan0` should appear.
