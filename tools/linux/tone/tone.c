@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <sound/asound.h>
@@ -28,13 +29,20 @@ int main(int argc, char **argv)
 	int fd, i, frames;
 
 	{
+		int cfd = open("/dev/snd/controlC0", O_RDWR);
+		fprintf(stderr, "control open -> %d (%s)\n", cfd, cfd < 0 ? strerror(errno) : "ok");
+		if (cfd >= 0)
+			close(cfd);
+	}
+	{
 		static const int flags[] = { O_RDWR, O_WRONLY, O_RDWR | O_NONBLOCK, O_WRONLY | O_NONBLOCK };
 		static const char *const nm[] = { "O_RDWR", "O_WRONLY", "O_RDWR|NB", "O_WRONLY|NB" };
 		int i;
 
 		for (i = 0; i < 4; i++) {
 			fd = open(dev, flags[i]);
-			fprintf(stderr, "open %s -> %d%s\n", nm[i], fd, fd < 0 ? "" : " (ok)");
+			fprintf(stderr, "open %s -> %d (%s)\n", nm[i], fd,
+				fd < 0 ? strerror(errno) : "ok");
 			if (fd >= 0)
 				break;
 		}

@@ -18,6 +18,13 @@ mkdir -p "$TMP/dev" "$TMP/proc" "$TMP/sys" "$TMP/tmp" "$TMP/run"
 "$CC" -static -Os -s -o "$TMP/init" "$ROOT/tools/linux/init.c"
 chmod 755 "$TMP/init"
 
+# GPU firmware (vendor blobs, kept out of git): zap shader + GMU + SQE
+if [ -d "$ROOT/prebuilt/fw-gpu" ]; then
+	mkdir -p "$TMP/lib/firmware/qcom"
+	cp "$ROOT"/prebuilt/fw-gpu/* "$TMP/lib/firmware/qcom/"
+	echo "    [OK] gpu firmware: $(ls "$ROOT"/prebuilt/fw-gpu | wc -l) files"
+fi
+
 # kernel modules needed at runtime (audio, wifi), loaded by init from load.order
 KMOD="$ROOT/build/linux/out"
 if [ -f "$KMOD/modules.order" ]; then

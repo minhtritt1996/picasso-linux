@@ -11,3 +11,4 @@ __pycache__/
 
 # Local dtschema install used by ./build.sh check
 /.venv-dtschema/
+prebuilt/fw-gpu/
