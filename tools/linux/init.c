@@ -620,13 +620,13 @@ static void mount_firmware(void)
 		klog("firmware: no modem partition\n");
 	}
 
-	mkdir_parents("/lib/firmware/bt");
+	mkdir_parents("/lib/firmware/qca");
 	if (find_part("bluetooth", dev, sizeof(dev)) == 0) {
-		if (try_mount(dev, "/lib/firmware/bt", "vfat") == 0 ||
-		    try_mount(dev, "/lib/firmware/bt", "ext4") == 0) {
+		if (try_mount(dev, "/lib/firmware/qca", "vfat") == 0 ||
+		    try_mount(dev, "/lib/firmware/qca", "ext4") == 0) {
 			klog("firmware: bluetooth %s mounted\n", dev);
-			list_dir("/lib/firmware/bt");
-			list_dir("/lib/firmware/bt/image");
+			list_dir("/lib/firmware/qca");
+			list_dir("/lib/firmware/qca/image");
 		} else {
 			klog("firmware: bluetooth mount failed: %s\n", strerror(errno));
 		}
@@ -656,6 +656,8 @@ static void mount_firmware(void)
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso/image");
 	list_devices("remoteproc");
 	list_devices("wifi");
+	/* the BT serdev probed before the bluetooth partition was mounted */
+	rebind("qcom_geni_serial", "894000.serial");
 	rebind("qcom_q6v5_pas", "4080000.remoteproc");
 	rebind("ath10k_snoc", "18800000.wifi");
 	/* rmtfs (EFS) and pd-mapper (PD map) must run before the modem boots;
@@ -771,6 +773,19 @@ static void mount_firmware(void)
 				    read_file(pth, buf, sizeof(buf)) > 0)
 					klog("state: modem = %s", buf);
 				list_dir("/sys/class/net");
+				list_dir("/dev/dri");
+				{
+					char buf2[512];
+					static const char *const drm[] = {
+						"/sys/class/drm/card0/device/uevent",
+						"/sys/kernel/debug/dri/0/name",
+					};
+					int k;
+
+					for (k = 0; k < (int)ARRAY_SIZE(drm); k++)
+						if (read_file(drm[k], buf2, sizeof(buf2)) > 0)
+							klog("drm: %s = %.200s\n", drm[k], buf2);
+				}
 				{
 					char cards[512];
 
@@ -908,8 +923,15 @@ static void cmd(int fd, char *line)
 	if (!*line)
 		return;
 	if (!strcmp(line, "reboot")) {
+		int f;
+
 		dprintf(fd, "rebooting to the loader\n");
 		sync();
+		f = open("/proc/sysrq-trigger", O_WRONLY);
+		if (f >= 0) {
+			(void)!write(f, "b", 1);
+			close(f);
+		}
 		reboot(RB_AUTOBOOT);
 	} else if (!strcmp(line, "help")) {
 		dprintf(fd, "commands: reboot, help, uname, mem, cat FILE, ls DIR\n");
@@ -1097,6 +1119,16 @@ int main(void)
 			sleep((unsigned)rs);
 			klog("picasso-init: auto_reboot after %d s\n", rs);
 			sync();
+			/* device shutdown hangs on some blocks here; sysrq-b restarts
+			 * without running the shutdown handlers */
+			{
+				int f = open("/proc/sysrq-trigger", O_WRONLY);
+
+				if (f >= 0) {
+					(void)!write(f, "b", 1);
+					close(f);
+				}
+			}
 			reboot(RB_AUTOBOOT);
 		}
 	}

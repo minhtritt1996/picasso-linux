@@ -205,6 +205,25 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   38-41 qup05, i2c8 49/50 qup12) with `picasso_pinmux.mode=read|write`; reads of
   `0xf526000`/`0xf926000` work, writes execute without faults.
 
+### Bluetooth: chip talks, patch download stalls
+
+- With `bootcpu=1` the loader watches the kernel from core 0, and a hung/killed
+  child returns to fastboot without a human (measured ~48 s), while the kernel
+  keeps running on core 1 - which makes `oem ramoops` a *live* kernel-log read.
+- `&uart5` stays stable now (the missing `wakeup-parent = <&pdc>` on the TLMM was
+  one of the causes) and the pads are muxed by `picasso-pinmux`.
+- The chip answers: `compatible = "qcom,wcn3991-bt"` (not wcn3990) makes the
+  version read succeed - Product 0x0a, SOC 0x40010320, ROM 0x0302, Patch 0x0de9.
+- Firmware must live under `/lib/firmware/qca/` (the driver prefixes `qca/`), so
+  init mounts the bluetooth partition at `/lib/firmware/qca` and the DT uses
+  `firmware-name = "image/crnv32.bin", "image/crbtfw32.tlv"` (property order is
+  **nvm, rampatch**; the driver's [0] is the nvm).
+- Remaining: the rampatch TLV transfer (`command 0xfc00 tx timeout`,
+  `Failed to send TLV segment -110`) after the version read, at 115200 and 3 M,
+  with and without `uart-has-rtscts`. Each setup also logs one
+  `Frame reassembly failed (-84)` (the 0xFD wake byte). Next: teach `qca_recv()`
+  to drop the 0xFD wakeup byte, and/or check CTS/RTS levels during the TLV send.
+
 ### TLMM (pinmux) — root cause of the silent BT/touch
 
 - `sm7250-xiaomi-picasso.dts` overrides `&tlmm` to a single `south` window at
