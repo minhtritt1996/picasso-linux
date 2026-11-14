@@ -548,3 +548,18 @@ DPU, and `snd-sm8250: MultiMedia1: error getting cpu dai name`.
 `tools/linux/usbacm.c` brings the CDC-ACM gadget up from systemd
 (`usbacm.service`, stays resident) and `serial-getty@ttyGS0` autologs root, so
 the Fedora userspace is reachable over the same USB cable (1d6b:0104).
+
+### Fedora userspace: root shell over USB, and logs on UFS
+
+- `usbacm.service` (Type=oneshot, RemainAfterExit) binds the CDC-ACM gadget and
+  `ttygs-shell.service` runs `bash --login` on `/dev/ttyGS0`. `serial-getty@`
+  is disabled: `login -f root` on this tty fails with `Permission denied`
+  (PAM, booted with `selinux=0`), and a plain shell is what iteration needs.
+- Reached on the device: `[root@fedora /]#`, `nproc` = 8, `free -m` = 5296 MB
+  total / 1463 used, `/etc/os-release` = "Fedora Linux 44 (Forty Four)".
+- **Logs on UFS.** `userdata` is *not* usable from Linux: it is
+  metadata-encrypted, so f2fs reports `Magic Mismatch ... 0x572000`.
+  `log-to-ufs.sh` (timer, every 30 s) writes `journal-<stamp>.log`,
+  `dmesg-<stamp>.log` and `cmdline-<stamp>.txt` to `/picasso-logs/` on the
+  Android **cache** partition (ext4, 384 MB, 318 MB free — verified mounted rw,
+  written, `sync`, unmounted), keeping the newest 20 boots.

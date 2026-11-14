@@ -72,8 +72,12 @@ static int bind_udc(void)
 	return -1;
 }
 
-/* The gadget must stay up: this process owns nothing else, but exiting would
- * make the service manager unbind/rebind the UDC and cut the link. */
+/*
+ * The binding lives in configfs and survives this process: the unit is
+ * Type=oneshot + RemainAfterExit so systemd waits for the UDC to be bound (and
+ * for /dev/ttyGS0 to exist) before starting serial-getty@ttyGS0, and never
+ * rebinds it behind the getty's back.
+ */
 int main(void)
 {
 	mkdir_if_missing("/sys/kernel/config");
@@ -82,10 +86,8 @@ int main(void)
 
 	if (access(GADGET, F_OK) == 0) {
 		/* already configured: only make sure it is bound */
-		if (access(GADGET "/UDC", F_OK) == 0 && bind_udc() == 0) {
-			for (;;)
-				pause();
-		}
+		if (access(GADGET "/UDC", F_OK) == 0 && bind_udc() == 0)
+			return 0;
 	}
 
 	mkdir_if_missing("/sys/kernel/config/usb_gadget");
@@ -106,8 +108,5 @@ int main(void)
 	    errno != EEXIST)
 		fprintf(stderr, "usbacm: symlink: %m\n");
 
-	if (bind_udc())
-		return 1;
-	for (;;)
-		pause();
+	return bind_udc() == 0 ? 0 : 1;
 }
