@@ -8,6 +8,8 @@
 #   ./build.sh loader              linux.efi (patched XnuLoader) -> build/out/
 #   ./build.sh bootimg             boot-linux.img + payload-linux.bin (needs UEFI_FD,
 #                                  BOOTSHIM, UEFI_DTB; CMDLINE optional)
+#   ./build.sh bootimg-luma        boot-luma.img: Android boot v2 image for the stock
+#                                  bootloader (kernel, initramfs, DTB; LUMA_CMDLINE)
 #   ./build.sh export-patches      regenerate patches/linux/picasso/*.patch from build/linux
 #   ./build.sh check               apply the series to a fresh tree, build, run dtbs_check
 #   ./build.sh clean               remove build/
@@ -174,6 +176,19 @@ build_bootimg() {
 		--uefi-fd "$fd" --bootshim "$shim" --uefi-dtb "$udtb" "${extra[@]}"
 }
 
+# The image the stock bootloader loads from `boot` (or `fastboot boot` loads into
+# RAM): Android boot v2 with the kernel, the initramfs and the DTB, at the load
+# addresses proven on this phone. RAM-only until the owner allows a flash.
+build_bootimg_luma() {
+	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
+	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
+	[ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/linux/mkinitramfs.sh" >/dev/null
+	python3 "$ROOT/tools/linux/build-luma-bootimg.py" \
+		--image "$OUT/Image" --initrd "$OUT/initrd.cpio.gz" \
+		--dtb "$OUT/sm7250-xiaomi-picasso.dtb" -o "$OUT/boot-luma.img" \
+		${LUMA_CMDLINE:+--cmdline "$LUMA_CMDLINE"}
+}
+
 export_patches() {
 	[ -d "$WS/.git" ] || die "nothing to export: run ./build.sh linux first"
 	local p1="picasso/0001-arm64-dts-qcom-sm7250-move-board-reserved-memory.patch"
@@ -288,6 +303,9 @@ case "${1:-}" in
 		;;
 	bootimg)
 		build_bootimg
+		;;
+	bootimg-luma)
+		build_bootimg_luma
 		;;
 	check)
 		run_check

@@ -127,7 +127,17 @@ workspace has actually observed; everything else is `not yet`.
    image. The page size matches the Luma initramfs' 4096-byte GPT. An unlocked
    bootloader boots unsigned images (custom ROMs do), so no AVB footer is
    needed; `boot.toml [avb] footer` can stay `none` unless a boot fails without it.
-7. **Kit constraints** (`scripts/devices/build-device-kit.py`): the boot image's
+7. **The boot image target exists**: `./build.sh bootimg-luma` builds
+   `build/out/boot-luma.img` from `Image`, `build/out/initrd.cpio.gz` and the
+   picasso DTB with `tools/linux/build-luma-bootimg.py`. It refuses a command
+   line without `pmos_root_uuid`/`pmos_boot_uuid`, refuses overlapping
+   kernel/ramdisk/DTB load addresses and an image over the partition limit, and
+   re-reads the result with `unpack_bootimg`. Current image: 20 299 776 B,
+   kernel @0x8000, ramdisk @0x1200000, DTB @0x1728000. This is exactly the
+   vehicle the stock bootloader uses, so `fastboot boot build/out/boot-luma.img`
+   (RAM-only, allowed) proves the Luma boot path without writing anything.
+
+8. **Kit constraints** (`scripts/devices/build-device-kit.py`): the boot image's
    command line must contain `pmos_root_uuid=03797c05-…` and
    `pmos_boot_uuid=032D-57AD` or the kit build refuses it; `[kit] flash` accepts
    only `flash <part> {userdata|kit|boot|dtbo}`, `boot {boot}`,
