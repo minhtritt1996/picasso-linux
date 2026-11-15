@@ -94,17 +94,27 @@ workspace has actually observed; everything else is `not yet`.
    `CONFIG_SECURITY_SELINUX=y` with `CONFIG_LSM="…,selinux,…"`,
    `CONFIG_PSI=y`, `CONFIG_ZRAM=y`.
 
-   Rebase work, from the seven patches in `patches/linux/picasso/`:
+   Rebase work, **measured** on 2026-11-15: shallow clone of `luma-7.2`
+   (`git clone --depth 1 --single-branch --branch luma-7.2`, 2.1 GB, HEAD
+   `497791a0a Linux 7.2.15`), then `git apply --check` for each patch in
+   `patches/linux/picasso/` (they are plain `git diff` files, so `git apply`,
+   not `git am`; the PR itself will be commits).
 
-   | Patch | Files | Rebase onto v7.2.15 |
+   | Patch | Files | Result on v7.2.15 |
    |---|---|---|
-   | 0001 sm7250 reserved memory | `sm7250.dtsi`, `sm7250-oneplus-avicii.dts` | net-new, carries cleanly |
-   | 0002 picasso board | `sm7250-xiaomi-picasso.dts`, `Makefile`, `qcom.yaml` | net-new |
-   | 0003 printk RAM console | `kernel/printk/printk.c` | printk changed between 7.2 and 7.3 — rework by hand |
-   | 0004 dd probe trace | `drivers/base/dd.c` | debug scaffolding: **drop** before the PR |
-   | 0005 pinctrl-msm unmapped tiles | `drivers/pinctrl/qcom/pinctrl-msm.c` | small, expect context drift |
-   | 0006 panel g7a-37-02-0a | new panel driver + binding | net-new |
-   | 0007 pinmux + audio | `picasso-pinmux.c`, q6asm-dai, soc-pcm, pcm_native | pinmux net-new; the three sound hunks need review |
+   | 0001 sm7250 reserved memory | `sm7250.dtsi`, `sm7250-oneplus-avicii.dts` | **conflict**: the avicii DTS files do not exist in the base — DTS is not a patch there but a new file |
+   | 0002 picasso board | `sm7250-xiaomi-picasso.dts`, `Makefile`, `qcom.yaml` | **conflict** (`Makefile` line 353 drift) — add the board DTS as a new file plus its `Makefile`/`qcom.yaml` hunk |
+   | 0003 printk RAM console | `kernel/printk/printk.c` | applies cleanly |
+   | 0004 dd probe trace | `drivers/base/dd.c` | applies, but it is debug scaffolding: **drop before the PR** |
+   | 0005 pinctrl-msm unmapped tiles | `drivers/pinctrl/qcom/pinctrl-msm.c` | applies cleanly |
+   | 0006 panel g7a-37-02-0a | binding, `Kconfig`, new driver, `Makefile` | binding + `Kconfig` + driver apply cleanly; the `Makefile` one-liner anchors on a 7.3 line (`panel-samsung-ams644vk04`) — re-add it in alphabetical position |
+   | 0007 pinmux + audio | `picasso-pinmux.c`, q6asm-dai, soc-pcm, pcm_native | applies cleanly |
+
+   So the family branch is: new `sm7250.dtsi` + `sm7250-xiaomi-picasso.dts`
+   (credit `lazybrar/avicii-mainline` and the mainline `sm8250` dtsi in the
+   commit messages), four patches as they are, the panel Makefile line, and
+   `luma/config/sm7250.fragment` derived from the working config in
+   `build/linux/out/.config` plus what `milos.fragment` proves a phone needs.
 
 5. **`socs/qcom/sm7250/soc.toml`** does not exist yet (HTTP 404 on `main`) — the
    family branch does. It must be added with `repository = SimplyLuma/linux`,
