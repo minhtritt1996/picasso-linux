@@ -175,10 +175,22 @@ How Luma works on it, without writing a UEFI storage driver:
    fallback). The rescue path stays USB: `fastboot boot` a RAM image, which
    never writes flash.
 4. Dual boot later: a second XNUP entry (the Android kernel + its ramdisk and
-   vendor DTB) plus a menu in the loader. Open research: whether picasso's
-   4.19 Android `Image` carries an EFI stub (then `LoadImage`/`StartImage`
-   works as it does for Linux) or whether the loader needs a jump-to-kernel
-   path with ARM64 boot parameters, as `LinuxLoader.efi` does.
+   vendor DTB) plus a menu in the loader. Two facts measured on 2026-11-15
+   from the MIUI `boot.img` in the Droidian downloads:
+
+   - **Android's kernel has no EFI stub.** It starts `00 00 9e 14` — a plain
+     arm64 `Image` branch instruction, `Linux version 4.19.113-perf-ga1b60ef832fb`.
+     `LoadImage`/`StartImage` therefore will not work for it; the loader needs a
+     jump-to-kernel path (MMU and caches off, `x0` = DTB, `x1`-`x3` = 0) as
+     `LinuxLoader.efi` does.
+   - **The payload window is too small for both kernels.** The vendor kernel is
+     50 456 588 B uncompressed and picasso's own `Image` is 60 MB
+     (18.6 MB gzipped), against a 63 MiB XNUP window. Dual boot therefore needs
+     either a raised `PAYLOAD_MAX`/`RESIDENT` window (BootShim copies to
+     `0xF0000000`; the constant is ours to change, but it must stay clear of the
+     kernel's usable memory and be reserved in the DTB) or a UEFI storage driver
+     so one of the two kernels is read from flash at boot instead of shipped in
+     RAM. Both are design work; neither is needed to boot Luma alone.
 
 What this changes in the deliverables:
 
