@@ -61,16 +61,19 @@ workspace has actually observed; everything else is `not yet`.
    (`https://media.simplyluma.com/media/aarch64/nightly/latest.json`). GPT with
    4096-byte sectors: `LumaBoot` (FAT32, 480 MiB at 1 MiB, volume ID
    `032D-57AD`) and `LumaRoot` (ext4, UUID `03797c05-cf87-4eda-adc4-6ce111baf2d3`).
-2. **`boot`** — our image: kernel + picasso DTB + an initramfs carrying the
-   shared OSTree resolver (`scripts/mobile/common/initramfs`), command line
-   naming `pmos_root_uuid=03797c05-…` and `pmos_boot_uuid=032D-57AD` (the kit
-   builder refuses an image without them). The resolver picks the highest
-   `version` entry and rewrites the `ostree=` argument; no fixed deployment
-   path is ever baked in. A-only: one `boot` partition, no slot switch.
-   `dtbo` policy: the stock bootloader concatenates the `dtbo` partition onto
-   the boot image, so a complete DTB in `boot` plus stock overlays in `dtbo`
-   is wrong; either flash `dtbo` blank (as fp6 does) or ship the DTB as the
-   boot image's dtb section and leave `dtbo` untouched — decide on hardware.
+2. **`boot`** — the UEFI chain, kept on purpose (owner decision, 2026-11-15):
+   `BootShim` + `SILICIUM_UEFI.fd` + an XNUP payload holding `loader.efi`,
+   the kernel (`Image`), the picasso DTB and the initramfs. The loader fills
+   `/chosen/linux,initrd-*` and the command line, then starts the kernel as an
+   EFI application. The initramfs carries the shared OSTree resolver
+   (`scripts/mobile/common/initramfs`) and its command line names
+   `pmos_root_uuid=03797c05-…` and `pmos_boot_uuid=032D-57AD`; the resolver
+   picks the highest `version` entry and rewrites `ostree=`, so no deployment
+   path is ever baked in. `dtbo` is never written (see 3-bis).
+   Sizes: `boot` is **128 MiB** (the MIUI `boot.img` is padded to exactly
+   134 217 728 B, header v2), and the loader's XNUP window is 63 MiB, which is
+   the real budget: kernel `Image.gz` 18.6 MB leaves ~44 MB for the initramfs.
+
 3. **Device kit** — with no `[device_repo]` (only Luma signs repositories, and
    that starts at adoption), modules and firmware live in the boot image, as
    the Pixel 9 port does. Firmware comes from the phone's own `modem`,
@@ -145,44 +148,51 @@ workspace has actually observed; everything else is `not yet`.
    `[device_repo]` (no Luma signing key) there is no `…-kit.sparse`, so the boot
    image carries modules and firmware.
 
-## 3-bis. Decision: the Luma port boots through ABL, not the UEFI chain
+## 3-bis. Decision: keep UEFI, because it is the dual-boot path
 
-Two boot architectures exist in this phone today and only one of them is a Luma
-port:
+The owner's call (2026-11-15): the UEFI chain stays and is the future dual-boot
+vehicle, so the Luma port boots through it rather than through the stock ABL.
 
-| | UEFI chain (current dev vehicle) | ABL + Android boot image (Luma) |
+| | kept UEFI chain | stock ABL + boot image (rejected as the product path) |
 |---|---|---|
-| `boot` holds | `BootShim` + `SILICIUM_UEFI.fd` + XNUP payload (`loader.efi`, `Image`, `initrd`, `dtb`) | one Android boot v2 image: `Image.gz`, initramfs, DTB |
-| started by | `fastboot boot` or the flashed shim | the stock ABL, straight from flash |
-| kernel cmdline | loader writes `/chosen/bootargs` from the payload | the image's cmdline (plus `androidboot.*` ABL adds) |
-| DTB | EFI configuration table, filled by the loader | the boot image's dtb field (required; the proven image has one) |
-| updates | rebuild the XNUP container by hand | libostree's aboot backend rebuilds the boot image from the deployment on every update |
-| ostree/Luma fits? | **no**: Luma's device kit flashes `luma-<codename>-<version>-boot.img` into `boot` and `luma-device-boot` rewrites that partition; a shim payload is not an image ostree can build |
+| `boot` holds | `BootShim` + `SILICIUM_UEFI.fd` + XNUP (`loader.efi`, `Image`, `initrd`, `dtb`) | one Android boot v2 image |
+| kernel cmdline | the loader writes `/chosen/bootargs` | the image's cmdline + `androidboot.*` |
+| DTB | EFI configuration table, filled by the loader | the image's `dtb` field |
+| second OS | one more payload entry and a menu in the loader | a slot the ABL switches to |
+| cost | kernel/initramfs updates rewrite `boot` | ostree rebuilds `boot` itself |
 
-So the port uses **ABL with a standard boot v2 image**; the UEFI chain stays the
-bring-up vehicle because it can RAM-boot a 4 GiB resident rootfs and keeps a
-fastboot server on the phone, which the ABL path cannot do.
+How Luma works on it, without writing a UEFI storage driver:
 
-Consequences already settled from evidence:
+1. The loader already hands the initramfs to Linux through
+   `/chosen/linux,initrd-*` (proven with the 2.4 GB resident image), so the
+   UEFI side needs **no filesystem and no UFS driver**: everything it loads is
+   either in the payload (kernel, DTB, initramfs) or in RAM set up by the
+   loader.
+2. The kernel's own `ufs_qcom` + ext4 mount `LumaRoot` from `userdata` by UUID,
+   and the shared OSTree resolver chooses the deployment. UFS block access
+   therefore happens where the driver already exists and is tested.
+3. Kernel or initramfs updates rewrite the whole `boot` image (A-only: no slot
+   fallback). The rescue path stays USB: `fastboot boot` a RAM image, which
+   never writes flash.
+4. Dual boot later: a second XNUP entry (the Android kernel + its ramdisk and
+   vendor DTB) plus a menu in the loader. Open research: whether picasso's
+   4.19 Android `Image` carries an EFI stub (then `LoadImage`/`StartImage`
+   works as it does for Linux) or whether the loader needs a jump-to-kernel
+   path with ARM64 boot parameters, as `LinuxLoader.efi` does.
 
-- **`dtbo` is never written.** The Droidian port booted a complete DTB inside the
-  boot image (1 424 224 B, overlays merged by hand) with the stock `dtbo`
-  untouched, so ABL does not apply that partition's overlays. Our image carries
-  the 60 909 B mainline DTB in the same field; `boot.toml [dtbo] policy` can stay
-  `"none"` on this device instead of fp6's `"blank"`.
-- **A-only.** One `boot`, no `--set-active`, no `qbootctl`: an update writes the
-  only boot image, so a broken kernel has no slot fallback. That is exactly why
-  bring-up stays RAM-only (`fastboot boot build/out/boot-luma.img`) until an ABL
-  boot is proven, and why the loader chain remains the rescue path.
-- **Margin to watch.** The kernel (`Image.gz` 18 596 192 B) ends at 0x11c4160,
-  while the ramdisk load address is 0x1200000 — 270 KB of headroom. If the
-  kernel grows, `--ramdisk-offset`/`--dtb-offset` must move together and be
-  re-proven on hardware; 0x1000000 was already shown to fail on this phone.
+What this changes in the deliverables:
 
-First hardware step when the phone is back, RAM-only and inside the standing
-approvals: `fastboot boot build/out/boot-luma.img`, then check that ABL accepted
-the image (kernel prints on the panel or `tty0`), that the DTB is the mainline
-one and that the initramfs runs. Nothing is flashed.
+- `./build.sh bootimg` (the XNUP chain) is the **product** image: its payload
+  must now accept the Luma initramfs instead of only our small one.
+- `./build.sh bootimg-luma` (Android boot v2 for ABL) is **diagnostic only**:
+  `fastboot boot build/out/boot-luma.img` proves kernel + DTB + initramfs on
+  the plain ABL path without touching flash, and stays as a rescue test.
+- The Luma device kit will need a per-device deviation: `[kit] flash` becomes
+  `flash userdata {userdata}`, `flash boot {boot}` where `{boot}` is the UEFI
+  chain image, and `INSTALL.md` explains that this phone boots Luma through
+  UEFI. No `dtbo`, no slot switch, no `qbootctl`.
+- `luma-device-boot`'s A/B slot machinery does not apply; kernel/initramfs
+  updates are our own step until the port is adopted.
 
 ## 4. Working rules in this workspace
 
