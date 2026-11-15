@@ -161,6 +161,32 @@ vehicle, so the Luma port boots through it rather than through the stock ABL.
 | second OS | one more payload entry and a menu in the loader | a slot the ABL switches to |
 | cost | kernel/initramfs updates rewrite `boot` | ostree rebuilds `boot` itself |
 
+What Luma itself supports (checked in its sources on 2026-11-15, sparse clone of
+`SimplyLuma/luma`):
+
+- **No Mu-Silicium and no lk2nd anywhere** in the repository (no hit for either
+  in `docs/`, `devices/`, `socs/`, `scripts/`, `tools/`, `config/`).
+- `devices/boot.schema.json` restricts `format` to `android-boot-v2`,
+  `android-boot-v3`, `android-boot-v4` and **`uefi`**, and `[install] method`
+  to `fastboot`, `installer`, **`uefi`**, `other`.
+- The worked `uefi` device is `microsoft/sp12in` (Qualcomm X1P laptop):
+  `format = "uefi"`, `[uefi] loader = "BOOTAA64.EFI"`, `dtb =
+  qcom/x1p42100-microsoft-sp12in.dtb`, `secure_boot = "development-disabled"`,
+  `[install] method = "uefi"`.
+- `raspberrypi/rpi5` boots through Fedora's U-Boot from a FAT32 partition.
+- Phones use the stock Android bootloader with a boot image (`fp6`:
+  `android-boot-v2`, `qbootctl`, blank `dtbo`).
+
+So the UEFI choice is *not* outside Luma's model: it is the `uefi` format. What
+Luma has no precedent for is a UEFI **shim on an Android phone** whose kernel,
+DTB and initramfs live in the boot image payload instead of files on an ESP —
+`[uefi] loader` names a file on a filesystem, and picasso's UEFI has no UFS
+driver. Expressing this port needs either a small extension to `[uefi]`
+(a payload description) or a documented deviation for `experimental`. `lk2nd`
+is not a candidate at all: it exists to give old MSM8916/8952/8953 phones a
+mainline-friendly bootloader, and SM7250 does not need it (Droidian boots a
+mainline kernel on this phone straight from ABL with a v2 image).
+
 How Luma works on it, without writing a UEFI storage driver:
 
 1. The loader already hands the initramfs to Linux through
