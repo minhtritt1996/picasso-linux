@@ -145,6 +145,45 @@ workspace has actually observed; everything else is `not yet`.
    `[device_repo]` (no Luma signing key) there is no `…-kit.sparse`, so the boot
    image carries modules and firmware.
 
+## 3-bis. Decision: the Luma port boots through ABL, not the UEFI chain
+
+Two boot architectures exist in this phone today and only one of them is a Luma
+port:
+
+| | UEFI chain (current dev vehicle) | ABL + Android boot image (Luma) |
+|---|---|---|
+| `boot` holds | `BootShim` + `SILICIUM_UEFI.fd` + XNUP payload (`loader.efi`, `Image`, `initrd`, `dtb`) | one Android boot v2 image: `Image.gz`, initramfs, DTB |
+| started by | `fastboot boot` or the flashed shim | the stock ABL, straight from flash |
+| kernel cmdline | loader writes `/chosen/bootargs` from the payload | the image's cmdline (plus `androidboot.*` ABL adds) |
+| DTB | EFI configuration table, filled by the loader | the boot image's dtb field (required; the proven image has one) |
+| updates | rebuild the XNUP container by hand | libostree's aboot backend rebuilds the boot image from the deployment on every update |
+| ostree/Luma fits? | **no**: Luma's device kit flashes `luma-<codename>-<version>-boot.img` into `boot` and `luma-device-boot` rewrites that partition; a shim payload is not an image ostree can build |
+
+So the port uses **ABL with a standard boot v2 image**; the UEFI chain stays the
+bring-up vehicle because it can RAM-boot a 4 GiB resident rootfs and keeps a
+fastboot server on the phone, which the ABL path cannot do.
+
+Consequences already settled from evidence:
+
+- **`dtbo` is never written.** The Droidian port booted a complete DTB inside the
+  boot image (1 424 224 B, overlays merged by hand) with the stock `dtbo`
+  untouched, so ABL does not apply that partition's overlays. Our image carries
+  the 60 909 B mainline DTB in the same field; `boot.toml [dtbo] policy` can stay
+  `"none"` on this device instead of fp6's `"blank"`.
+- **A-only.** One `boot`, no `--set-active`, no `qbootctl`: an update writes the
+  only boot image, so a broken kernel has no slot fallback. That is exactly why
+  bring-up stays RAM-only (`fastboot boot build/out/boot-luma.img`) until an ABL
+  boot is proven, and why the loader chain remains the rescue path.
+- **Margin to watch.** The kernel (`Image.gz` 18 596 192 B) ends at 0x11c4160,
+  while the ramdisk load address is 0x1200000 — 270 KB of headroom. If the
+  kernel grows, `--ramdisk-offset`/`--dtb-offset` must move together and be
+  re-proven on hardware; 0x1000000 was already shown to fail on this phone.
+
+First hardware step when the phone is back, RAM-only and inside the standing
+approvals: `fastboot boot build/out/boot-luma.img`, then check that ABL accepted
+the image (kernel prints on the panel or `tty0`), that the DTB is the mainline
+one and that the initramfs runs. Nothing is flashed.
+
 ## 4. Working rules in this workspace
 
 - **RAM-only by default.** Everything in this port so far is `fastboot boot`,
