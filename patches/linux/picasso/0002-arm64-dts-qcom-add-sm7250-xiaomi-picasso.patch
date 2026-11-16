@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..3fbc7b028
+index 000000000..c36e979de
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,734 @@
+@@ -0,0 +1,733 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -738,10 +738,9 @@ index 000000000..3fbc7b028
 +};
 +
 +&pon_pwrkey {
-+	/* wakeup-source is what lets the power key wake the SoC from s2idle;
-+	 * without it the key is an input device only and a suspended phone can
-+	 * only be recovered by holding the key (which powers it off). */
-+	wakeup-source;
++	/* NOT a wake source: pressing power while suspended ends in a PS_HOLD
++	 * drop (the phone powers off instead of resuming), while volume-up and
++	 * volume-down resume cleanly. Keep this key out of the wake path. */
 +	status = "okay";
 +};
 +

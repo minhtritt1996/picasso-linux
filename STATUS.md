@@ -1317,3 +1317,35 @@ Two smaller follow-ups this exposed:
 - `enable_irq_wake()` on an SPMI PMIC IRQ only works if the PMIC arbiter chain
   is wake-capable; worth verifying with `dmesg | grep -i wakeup` after the
   next boot rather than assuming the DT property was enough.
+
+### Suspend/resume WORKS — wake it with volume-up, not power (2026-11-16)
+
+A real `echo mem` with the diagnostic cmdline (`no_console_suspend`,
+`pm_print_times`, `cpuidle.off=1`) and an **armed volume-up wake** completes:
+
+```
+[77.015389] PM: suspend entry (s2idle)
+[80.626626] PM: suspend devices took 3.492 seconds
+[93.044948] PM: resume devices took 0.716 seconds
+[93.058285] PM: suspend exit
+```
+
+After the resume: USB gadget up, `wlan0` back with a DHCP lease
+(<lan-ip>), backlight still 1638, uptime continuous. So the s2idle path
+itself is sound on this port - 0.7 s to resume every device.
+
+What does **not** work is waking with the **power key**: every attempt ended in
+the phone powering off (PS_HOLD drop) instead of resuming. That is the PON path,
+not the suspend path. `wakeup-source` is therefore removed from `pon_pwrkey`
+and kept on `volume-up` (`gpio-keys`) and `volume-down` (`pon_resin`), which are
+the keys that resume cleanly.
+
+Still open:
+
+- `cpuidle.off=1` was in the cmdline for this test; the next cycle boots without
+  it to see whether the PSCI `domain-idle-states` (cluster collapse,
+  `arm,psci-suspend-param = <0x41000044>`) are safe. If they are not, trim them
+  in the SoC dtsi instead of carrying a boot flag.
+- `rtc0` still has no `wakealarm`, so an unattended self-wake test is not
+  possible yet (PMIC alarm IRQ not wired); the alarm would also let a test wake
+  the phone without hands.
