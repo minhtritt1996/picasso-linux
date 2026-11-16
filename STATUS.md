@@ -1520,3 +1520,36 @@ with the same full retry/CRC/reset-state sequence before restarting polling.
 Added read-only `report_count` under the SPI device; it counts successfully
 read frames passed to the parser, including idle frames, to distinguish a dead
 poller from no fingers. This resume reload remains pending a new hardware soak.
+
+### A mobile shell on the RAM base: weston yes, Phosh close, Luma itself needs `userdata`
+
+What is on screen today without writing UFS: **weston with the pixman
+renderer** (desktop-shell, 1080x2400, touch input live). That is the working
+compositor, and it is what made the "no UI" bug go away.
+
+Attempted on top of that, same image, no flash:
+
+1. `dnf --installroot … --forcearch=aarch64 --setopt=tsflags=noscripts install
+   phosh phoc greetd` into the Fedora tree (149 packages, tree 1.2 -> 1.8 GiB).
+   Missing %post steps had to be replayed by hand: `glib-compile-schemas`,
+   `gdk-pixbuf-query-loaders`, `mkdir /run/user/0`.
+2. libseat has no seat for a plain system service: `seatd` + `LIBSEAT_BACKEND=seatd`
+   fixed that; an agetty autologin was tried first and only produced a
+   restart loop.
+3. phoc on DRM then fails exactly like the reference SM7250 port describes:
+   `connector DSI-1: Atomic commit failed: Device or resource busy` - the DPU
+   atomic path, not the renderer.
+4. Nested inside weston (`WLR_BACKENDS=wayland`) phoc connects and the Phosh
+   shell runs, then dies on a **GTK icon**: `Failed to load
+   /usr/share/icons/Adwaita/scalable/status/image-missing.svg: Unrecognized
+   image file format`. Fedora 44 no longer ships an SVG loader for
+   gdk-pixbuf (`librsvg2` and `gdk-pixbuf2-modules-extra` were installed and
+   contain none), and Phosh 0.57 uses GTK3, which needs one.
+
+So the blocker for a *mobile shell* on the RAM base is packaging, not the
+kernel: an SVG pixbuf loader (or an icon theme with PNGs). That is fixable.
+
+**Luma OS itself is a different matter**: its ARM image is 9.37 GB sparse with
+`LumaBoot`/`LumaRoot` inside `userdata`, so running it means writing `userdata`
+(a flash write the owner has deferred) - it cannot live in the 5.3 GB of RAM
+next to the kernel.
