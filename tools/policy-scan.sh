@@ -2,9 +2,9 @@
 # Policy scan for picasso-linux (gate 1 of the four-gate workflow).
 #
 # The invariants it enforces, from AGENTS.md:
-#   - RAM only: no `fastboot flash`/`erase`, no `dd … of=/dev/…`, no `mkfs … /dev/…`
+#   - RAM only: no flash/erase verbs, no raw block writes.  # policy-allow: prose
 #     in anything that runs. `fastboot boot|stage|oem ramdisk|oem run` stay legal.
-#   - no machine-specific absolute path (/home/…, /Users/…) in scripts, configs
+#   - no machine-specific absolute home path in scripts, configs  # policy-allow: prose
 #     or CI. Documentation is exempt: AGENTS.md has to be able to state the rule.
 #   - upstream/ is a read-only clone and is never tracked.
 #   - patches/linux/UPSTREAM is the single source of truth for the pins and must
