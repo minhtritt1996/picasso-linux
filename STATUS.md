@@ -1202,3 +1202,29 @@ Lockdown is not a touch-bootloader register: downstream
 `techpack/display/msm/dsi/dsi_panel_mi.c:dsi_panel_lockdown_info_read` reads eight
 bytes through panel DSI commands after panel initialization. No SPI OTP address
 is invented here; obtaining those bytes still needs a separate DSI read path.
+
+### Suspend ladder: the phone survives every level, the USB console does not
+
+`pm_test` does exist on the new kernel (`ls /sys/power`: `pm_test`, `mem_sleep`,
+`state`, `suspend_stats`, …) with levels
+`none core processors platform devices freezer`.
+
+- `freezer`: `Freezing user space processes completed (elapsed 0.002 seconds)`,
+  `PM: suspend debug: Waiting for 5 second(s).`, `PM: suspend exit` — passes.
+- `devices` and below: the phone **stays alive** (the composite gadget
+  re-enumerates, `Bus 001 Device 094`) but the CDC-ACM console goes away and its
+  shell dies with the tty hangup, so the results cannot be read back over that
+  console; the half-local addresses also stay unreachable (host `enx…` keeps no
+  carrier after the resume). A power cycle is the only way back once that
+  happens.
+- `rtcwake` is not an option yet: `/sys/class/rtc/rtc0/wakealarm` does not exist
+  and reading the RTC returns `EIO`, so the PMIC alarm IRQ is not wired
+  (`rtc-pm8xxx` clears `RTC_FEATURE_ALARM` when the alarm IRQ is missing). Until
+  that is fixed, a real s2idle suspend has **no** self-wake: the power key is
+  the only candidate (now `wakeup-source`), and a failed wake means holding the
+  key, i.e. power off.
+
+`tools/pmtest-ladder.sh` therefore runs the whole ladder detached and writes to
+`/cache/pmtest.log` on the UFS cache partition, so the result survives both the
+console hangup and a reset. Next: power-cycle, run it, read the log from the next
+boot.

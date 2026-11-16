@@ -11,8 +11,10 @@ Usage:
   console_cmd.py --reboot             # reboot the RAM kernel (back to the loader)
   console_cmd.py --capture            # stream the console to $OUT for $CAPTURE s
 """
+import fcntl
 import os
 import select
+import struct
 import sys
 import time
 import termios
@@ -26,6 +28,14 @@ def open_tty(dev=DEV):
     attrs[2] |= termios.CLOCAL | termios.CREAD
     attrs[3] = 0
     termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    # The phone's CDC-ACM gadget only talks once DTR and RTS are asserted: after
+    # a USB re-enumeration (a suspend/resume cycle) they come up low and the
+    # console looks dead although the kernel is fine.
+    try:
+        fcntl.ioctl(fd, termios.TIOCMBIS,
+                    struct.pack('I', termios.TIOCM_DTR | termios.TIOCM_RTS))
+    except OSError:
+        pass
     os.set_blocking(fd, False)
     return fd
 
@@ -54,9 +64,9 @@ def drain(fd, seconds):
         try:
             chunk = os.read(fd, 16384)
         except (BlockingIOError, OSError):
-            break
+            continue
         if not chunk:
-            break
+            continue        # a CDC-ACM read can return empty without meaning EOF
         out += chunk
     return out.decode(errors="replace")
 
@@ -73,9 +83,9 @@ def capture(fd, seconds, path):
             try:
                 chunk = os.read(fd, 16384)
             except (BlockingIOError, OSError):
-                break
+                continue
             if not chunk:
-                break
+                continue
             log.write(chunk)
             log.flush()
             written += len(chunk)
