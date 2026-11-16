@@ -1486,3 +1486,28 @@ Notes from the run:
 
 Still to check: finger reports after a resume (needs a tap), and the longer
 "sleep and wake by incoming call" case which needs the modem stack.
+
+### Touch after suspend: the SRAM firmware is lost, so resume must re-upload it
+
+The 10-cycle soak left the driver healthy but **silent**: taps produced no
+reports and the driver logged nothing (no `ESHUTDOWN`, no sync-while-suspend).
+Rebinding the SPI device re-ran the whole firmware path and the very next tap
+reported again:
+
+```
+rebind -> boot CRC flags=0x4, CRC ILM=0x58e87d07 DLM=0xb1eaa281,
+          fw info ver 0x14 abs 1080x2400
+25 s probe with a finger -> X 366..659 (76 samples), Y 310..2273 (128 samples),
+          BTN_TOUCH [1,0,1,0,1,0]
+```
+
+So the controller loses its **SRAM firmware** (and with it the reporting state)
+across s2idle - the poll work item was not the problem after all. The fix is in
+`nvt_resume`: redo the boot sequence there (SWRST_N8 -> SPI_RD_FAST=0 ->
+re-upload the container with CRC/BOOT_RDY -> reset-state check) before
+rescheduling the poll, and log the reset state per resume. A report counter
+should also be exposed so "no reports" can be told apart from "poller dead"
+without a rebind.
+
+Until that lands, touch works after a fresh probe/rebind and stops working after
+the first suspend.
