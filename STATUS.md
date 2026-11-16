@@ -925,3 +925,31 @@ understood (candidate: a 0xFD arriving while `rx_skb != NULL`).
 Fast loop used for all of this (one cycle ≈ 130 s): `reboot` from Linux → loader
 comes up in 42 s → `oem ramdisk` → `stage` the 606 MB resident rootfs (19 s) →
 `stage` the payload (2 s) → `oem run` → USB console in 12 s.
+
+### Wi-Fi — re-verified 2026-11-16, and the timing that makes checks lie
+
+Wi-Fi was never broken; a check 20 s after boot is simply too early. The chain
+(modem PAS → ath10k_snoc → MAC80211 association) completes at ~74 s:
+
+```
+[74.649] wlan0: authenticate with <bssid> (local address=aa:57:75:8f:5c:19)
+[74.655] wlan0: associate with <bssid> (try 1/3)
+[74.733] wlan0: associated
+```
+
+Verified on the device (RAM boot, 36 min uptime):
+`<lan-ip>/22` from NetworkManager, DNS `dl.simplyluma.com → 167.71.22.210`,
+sshd listening on 22, and from the host:
+
+```
+$ ssh -i … root@<lan-ip> 'iw dev wlan0 link'
+Connected to <bssid> (on wlan0)
+        SSID: <ssid>
+        freq: 5765.0            <- 5 GHz
+        RX: 8632950 bytes (72103 packets)
+        signal: -57 dBm
+```
+
+`ping` is not installed in this image; use `getent hosts` or `curl` for
+reachability. `user@0.service` fails (no `hostname`/PAM pieces in the trimmed
+root), harmless for the console and ssh paths.
