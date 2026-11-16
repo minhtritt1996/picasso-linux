@@ -1069,3 +1069,42 @@ reference avicii port (same SoC, GPU reported working there), (3) bisect `-rc7`
 against `v7.3` for a6xx HFI/power changes, (4) check whether `a6xx_recover`
 itself leaves the CP in the state that hangs, by disabling the hangcheck timer
 and seeing whether the *first* submit of a boot also hangs.
+
+### Touch — the controller never runs its firmware (2026-11-16)
+
+`tools/touch-probe.py` (new) reads the evdev node and prints what actually
+arrives; two minutes of tapping produced **0 SYN_REPORT**, so the driver really
+emits nothing.
+
+The driver now does what the vendor's SPI driver does at boot and logs the
+result:
+
+```
+picasso-nvt-ts spi0.0: NT36672C id 0c 00 00 72 66 03
+picasso-nvt-ts spi0.0: fw reset state 0xb9 after 101 polls (NOT running)
+picasso-nvt-ts spi0.0: swrst-n8 reads 0x00
+```
+
+- the **chip id** reads correctly (bootloader space, page 0x1f64e), so the SPI
+  protocol and the pads are right;
+- the firmware "reset complete" byte at `EVENT_BUF_ADDR | 0x60` never reaches
+  `0xA0..0xAF`: the fw is not running, which is why every later read of the
+  event buffer is noise (the driver's scores are 1-2 on random bytes);
+- the vendor DT gives the SPI reset address: `novatek,swrst-n8-addr =
+  <0x03f0fe>` (write 0x69 to boot, 0xaa to idle), `novatek,spi-rd-fast-addr =
+  <0x03f310>`. Our driver used the *I2C* engine-reset register (0x7fff80, 0x5a);
+  switching to the SPI form changed nothing, so the reset write is not the
+  blocker either;
+- `picasso_nvt_spi.no_reset=1` boots without touching the controller at all and
+  gives the same 0x00/0xb9: the chip does not come up by itself.
+
+So this panel's controller expects its firmware to be **loaded by the driver**
+(the vendor ships `novatek_nt36672c_g7a_fw01/02/03.bin` and has a
+`Boot_Update_Firmware()` worker). Next: build the fw-update path from
+`nt36xxx_fw_update.c` into the driver (enter bootloader, write flash pages,
+read back the "NVT" end flag, reset), with the .bin taken from the phone's own
+vendor partition. That is a real feature-sized piece of work, not a tweak.
+
+Meanwhile the driver keeps: the vendor fw checks, the SPI SWRST_N8 address, and
+the `no_reset` bring-up switch (all logged), so the next attempt starts from
+evidence instead of guesses.
