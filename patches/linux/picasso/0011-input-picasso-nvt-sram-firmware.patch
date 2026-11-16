@@ -33,10 +33,10 @@ index ef029f232..f0db79ff6 100644
 +obj-$(CONFIG_TOUCHSCREEN_PICASSO_NVT)	+= picasso-nvt-spi.o
 diff --git a/drivers/input/touchscreen/picasso-nvt-spi.c b/drivers/input/touchscreen/picasso-nvt-spi.c
 new file mode 100644
-index 000000000..5f8975246
+index 000000000..8138caa2b
 --- /dev/null
 +++ b/drivers/input/touchscreen/picasso-nvt-spi.c
-@@ -0,0 +1,568 @@
+@@ -0,0 +1,589 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Novatek NT36672C touchscreen on the Xiaomi Redmi K30 5G (picasso, SM7250).
@@ -74,6 +74,7 @@ index 000000000..5f8975246
 +#include <linux/module.h>
 +#include <linux/spi/spi.h>
 +#include <linux/workqueue.h>
++#include <linux/atomic.h>
 +
 +#define NVT_MAX_FINGERS		10
 +#define NVT_REPORT_LEN		(1 + 6 * NVT_MAX_FINGERS)
@@ -123,6 +124,7 @@ index 000000000..5f8975246
 +	u8 rx[NVT_REPORT_LEN + 8];
 +	u32 event_buf;
 +	bool have_event_buf;
++	atomic_t report_count;
 +	u8 last_slot_state[NVT_MAX_FINGERS];
 +	int last_nz;
 +	u8 best_report[NVT_REPORT_LEN];
@@ -361,6 +363,7 @@ index 000000000..5f8975246
 +
 +static void nvt_report(struct nvt_ts *ts, const u8 *report)
 +{
++	atomic_inc(&ts->report_count);
 +	struct input_dev *input = ts->input;
 +	bool touch = false;
 +	int i;
@@ -403,6 +406,15 @@ index 000000000..5f8975246
 +		dev_warn_once(&ts->spi->dev, "report read failed: %d; retrying\n", ret);
 +	schedule_delayed_work(&ts->poll, msecs_to_jiffies(NVT_POLL_MS));
 +}
++
++static ssize_t report_count_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct nvt_ts *ts = dev_get_drvdata(dev);
++	return sysfs_emit(buf, "%d\n", atomic_read(&ts->report_count));
++}
++static DEVICE_ATTR_RO(report_count);
++static struct attribute *nvt_attrs[] = { &dev_attr_report_count.attr, NULL };
++static const struct attribute_group nvt_attr_group = { .attrs = nvt_attrs };
 +
 +static int nvt_probe(struct spi_device *spi)
 +{
@@ -542,6 +554,10 @@ index 000000000..5f8975246
 +				  INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
 +	if (ret)
 +		return dev_err_probe(&spi->dev, ret, "input_mt_init_slots\n");
++	atomic_set(&ts->report_count, 0);
++	ret = devm_device_add_group(&spi->dev, &nvt_attr_group);
++	if (ret)
++		return ret;
 +	ret = input_register_device(input);
 +	if (ret)
 +		return dev_err_probe(&spi->dev, ret, "input_register_device\n");
@@ -572,7 +588,12 @@ index 000000000..5f8975246
 +static int nvt_resume(struct device *dev)
 +{
 +	struct nvt_ts *ts = dev_get_drvdata(dev);
++	int ret;
 +
++	ret = nvt_upload(ts);
++	dev_info(dev, "resume SRAM reinit ret=%d (partition/reset details above)\n", ret);
++	if (ret)
++		return ret;
 +	schedule_delayed_work(&ts->poll, msecs_to_jiffies(200));
 +	return 0;
 +}

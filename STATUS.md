@@ -1511,3 +1511,12 @@ without a rebind.
 
 Until that lands, touch works after a fresh probe/rebind and stops working after
 the first suspend.
+
+Coordinator follow-up evidence: ten s2idle cycles passed (success=10 fail=0,
+resume 0.34s), but a finger produced zero reports afterward. A touch-only
+rebind restored reports (25s probe X=366..659, 76 samples; Y=310..2273,
+128 samples; BTN_TOUCH 1/0 transitions). Resume now re-downloads SRAM firmware
+with the same full retry/CRC/reset-state sequence before restarting polling.
+Added read-only `report_count` under the SPI device; it counts successfully
+read frames passed to the parser, including idle frames, to distinguish a dead
+poller from no fingers. This resume reload remains pending a new hardware soak.
