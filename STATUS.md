@@ -1455,3 +1455,34 @@ Two traps found on the way, both fixed:
 Wake keys, settled by measurement: **volume-up and volume-down resume the phone,
 the power key powers it off** (PON -> PS_HOLD drop), so `pon_pwrkey` is not a
 wake source in the DT.
+
+### Sleep/wake soak: 10/10 cycles, then Wi-Fi and touch both back (2026-11-16)
+
+`tools/suspend-soak.sh 10 /mnt/ufs-logs/soak.log VOLUME-DOWN`, one volume-down
+press per cycle, logged to the UFS cache partition:
+
+```
+cycle 1..7: resume devices took 0.340-0.344 s
+cycle 8..10: resume devices took 0.688-0.736 s
+soak done: 10/10 cycles counted by suspend_stats
+success=10 fail=0
+```
+
+Notes from the run:
+
+- **Wi-Fi**: the log says `wlan0=down` on every cycle because it samples 2 s
+  after the wake; the interface actually re-associates a moment later
+  (`wlan0: authenticated/associated`, lease <lan-ip>) and stays up. The soak
+  check should wait for the association instead of sampling once.
+- **Touch survives the suspends**: this boot's log shows the firmware path
+  working (`boot CRC flags=0x4`, `CRC result ILM=0x58e87d07 DLM=0xb1eaa281`,
+  `fw info: ver 0x14 x_num 18 y_num 36 abs 1080x2400`) and **no**
+  `Attempted to sync while suspend`, i.e. the new `nvt_suspend`/`nvt_resume`
+  hooks restart the poller.
+- The ADSP sensor-PD watchdog still fires every ~40 s (`USER-PD DOG detects
+  stalled initialization`), unrelated to suspend; it is the open sensors item.
+- Resume time doubling on cycles 8-10 (0.34 -> 0.7 s) is the WLAN/modem path
+  coming back, not a failing device.
+
+Still to check: finger reports after a resume (needs a tap), and the longer
+"sleep and wake by incoming call" case which needs the modem stack.
