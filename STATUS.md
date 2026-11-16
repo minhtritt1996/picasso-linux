@@ -1022,3 +1022,50 @@ sequence against the reference avicii port byte for byte (same SoC, GPU reported
 working there) using their `.config`; (3) bisect `-rc7` against `v7.3` for a6xx
 HFI/power changes, since the fault looks like a GMU/CP handshake problem rather
 than a rendering bug.
+
+### UI on screen with the CPU renderer (2026-11-16)
+
+With the backlight fixed the panel shows the console, but weston presented
+nothing: its log ends at `launching '/usr/libexec/weston-desktop-shell'` and
+never reports a repaint. The compositor blocks in the first atomic commit
+because that frame is a GPU submission, the submission hangs, `hangcheck
+recover` runs, and weston is still waiting.
+
+Running weston with the **pixman** renderer removes the GPU from the path
+entirely (`userland/fedora/weston.service.d/pixman.conf`, installed as
+`/etc/systemd/system/weston.service.d/pixman.conf`):
+
+```
+Using Pixman renderer
+Output 'DSI-1' enabled with head(s) DSI-1
+```
+
+Measured over 25 s: `hangcheck recover` count **44 -> 44** (it used to grow once
+per minute), zero weston errors, backlight 2048/4095. The UI is therefore usable
+on screen while the Adreno 620 hang is worked on; Phosh has the same escape
+hatch in `WLR_RENDERER=pixman`.
+
+### The GPU hang, as measured today
+
+One submission hangs per compositor frame cycle:
+
+```
+adreno 3d00000.gpu: gpu fault ring 0 fence ffffff2b status 00800007 rb 0048/0048
+RBBM_STATUS 0x00800007 = GPU_BUSY_IGN_AHB | CP_BUSY | CP_AHB_BUSY_{CP,CX}
+```
+
+- fences do retire when the GPU is idle (`last-fence == retired-fence`), so the
+  ring and the timestamp path work in general;
+- no `arm-smmu` fault is ever logged: the CP stalls on an AHB transaction, not
+  on a translation fault;
+- two genuine upstream bugs are fixed and carried (`0009` OPP use-after-free in
+  `a6xx_pm_resume`, `0010` RPMH dependency votes resolved on the wrong device);
+  neither is the cause, the fault count only went 60 -> 38 -> 36 per boot;
+- the loop is self-sustaining: recover -> compositor repaint -> hang again.
+
+Next: (1) clamp the MX vote (`86f80884f`, needs the newer
+`a6xx_gmu_rpmh_arc_index` signature), (2) compare the GMU boot sequence with the
+reference avicii port (same SoC, GPU reported working there), (3) bisect `-rc7`
+against `v7.3` for a6xx HFI/power changes, (4) check whether `a6xx_recover`
+itself leaves the CP in the state that hangs, by disabling the hangcheck timer
+and seeing whether the *first* submit of a boot also hangs.
