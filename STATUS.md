@@ -1415,3 +1415,43 @@ These follow-up changes are compiled offline; touch across suspend with this
 version is still untested. Lockdown bytes remain unknown, fw01 works for this
 panel, and firmware provenance is the downstream ihex rather than the MIUI
 vendor image, which lacks these files. No flash operation was performed.
+
+### Touch WORKS (2026-11-16): SRAM firmware upload + real finger reports
+
+The controller needed its firmware loaded by the driver (host-download to SRAM,
+not a flash write). With that in place (`0011`), one 60 s probe with a finger on
+the panel gave:
+
+```
+83 SYN_REPORT   slots [0,1]   BTN_TOUCH 1/0 repeated
+X 216..739  (136 samples)
+Y  86..2204 (161 samples)
+```
+
+which is the full chain working end to end:
+
+1. SWRST_N8 `0x69` + `SPI_RD_FAST=0`, then the container parsed exactly like the
+   vendor SPI driver (ILM/DLM at list*12, info at 0x30+16n, overlays at DLM
+   BIN_addr+16n, `size+1` writes);
+2. golden CRCs written to `0x3f100/0x3f104`, ILM/DLM length and destination
+   registers set, `BLD_CRC_EN |= 0x80`, reset status cleared, `HOST_CMD 0xAE`,
+   `BOOT_RDY 0x3f10d <- 1`;
+3. firmware reports ready: `reset state 0xa1` (0xa0..0xaf), CRC flags `0x4`
+   (`crc_done=1`), first attempt, no retries needed;
+4. the poller reads the NT36675 event buffer (`0x22d00`) and the input device
+   emits multitouch slots with coordinates inside the 1080x2400 panel.
+
+Two traps found on the way, both fixed:
+
+- **the poller died on suspend**: `picasso-nvt-ts: Attempted to sync while
+  suspend`, SPI returned `ESHUTDOWN` and the delayed work never rescheduled, so
+  every probe after a suspend silently saw nothing. The driver now has
+  `nvt_suspend`/`nvt_resume` (`DEFINE_SIMPLE_DEV_PM_OPS`) that cancel and restart
+  the poll, and the read path retries instead of dying on an error;
+- **a duplicate `wakeup-source`** in `key-vol-up` broke every clean DTB build
+  (`dtc: duplicate_property_names`), which is why the exported series failed the
+  CI check while the local tree still built from a stale dtb. Removed.
+
+Wake keys, settled by measurement: **volume-up and volume-down resume the phone,
+the power key powers it off** (PON -> PS_HOLD drop), so `pon_pwrkey` is not a
+wake source in the DT.
