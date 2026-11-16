@@ -70,9 +70,11 @@ workspace has actually observed; everything else is `not yet`.
    `pmos_root_uuid=03797c05-…` and `pmos_boot_uuid=032D-57AD`; the resolver
    picks the highest `version` entry and rewrites `ostree=`, so no deployment
    path is ever baked in. `dtbo` is never written (see 3-bis).
-   Sizes: `boot` is **128 MiB** (the MIUI `boot.img` is padded to exactly
-   134 217 728 B, header v2), and the loader's XNUP window is 63 MiB, which is
-   the real budget: kernel `Image.gz` 18.6 MB leaves ~44 MB for the initramfs.
+   Sizes, measured from ABL on 2026-11-16: `fastboot getvar partition-size:boot`
+   = `0x8000000` (**128 MiB**), and `getvar current-slot` fails → **A-only**,
+   which also matches the MIUI `boot.img` being padded to exactly 134 217 728 B.
+   The loader's XNUP window is 63 MiB, which is the real budget: kernel
+   `Image.gz` 18.6 MB leaves ~44 MB for the initramfs.
 
 3. **Device kit** — with no `[device_repo]` (only Luma signs repositories, and
    that starts at adoption), modules and firmware live in the boot image, as
