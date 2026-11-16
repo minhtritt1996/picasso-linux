@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..d475a7c4e
+index 000000000..f1e97c10b
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,717 @@
+@@ -0,0 +1,725 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -655,6 +655,14 @@ index 000000000..d475a7c4e
 +/* Panel backlight: the PM8150L WLED boost converter (vendor
 + * qcom,string-cfg = <7>, qcom,ovp = <28000>). Without this node the panel scans
 + * out frames but the display stays dark: nothing drives the LED strings. */
++/* Charging: the SMB5 charger in PM7250B, disabled by default in pm7250b.dtsi.
++ * The vendor's charging stack also reads its ADC channels and a QBG gauge;
++ * mainline's charger driver only needs the register block, so this gives
++ * ONLINE/PRESENT/STATUS/CHARGE_TYPE and a charge_behaviour knob. */
++&pm7250b_charger {
++	status = "okay";
++};
++
 +&pm8150l_wled {
 +	status = "okay";
 +	/* only one of num-strings / enabled-strings may be given */

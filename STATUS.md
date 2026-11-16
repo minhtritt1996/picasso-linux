@@ -1108,3 +1108,28 @@ vendor partition. That is a real feature-sized piece of work, not a tweak.
 Meanwhile the driver keeps: the vendor fw checks, the SPI SWRST_N8 address, and
 the `no_reset` bring-up switch (all logged), so the next attempt starts from
 evidence instead of guesses.
+
+### Charging status — WORKS (2026-11-16): `pm7250b-usb` power supply
+
+Picasso's charger is the SMB5 block in **PM7250B** (vendor `qcom,qpnp-smb5`),
+and mainline already has a driver for exactly that part
+(`CONFIG_CHARGER_QCOM_PM7250B`). Nothing was enabled:
+
+- the driver was not built (`=m` is worthless in a RAM initramfs with no module
+  loader), and
+- `pm7250b.dtsi` ships the charger node with `status = "disabled"`.
+
+After `CONFIG_CHARGER_QCOM_PM7250B=y` and `&pm7250b_charger { status = "okay"; }`:
+
+```
+qcom-pm7250b-charger ...: CHGR_CFG2=0x2c (CHG_EN_SRC=command, CHG_EN_POLARITY=0)
+  ENABLE_CMD=0x01 STATUS_1=0x45: charge control via command bit (active high)
+/sys/class/power_supply/pm7250b-usb: present=1 status=Full charge_type=N/A
+  charge_behaviour=[auto] inhibit-charge  start=95 end=100
+```
+
+So "is USB in", "is it charging / full", and the inhibit-charge knob are
+available to userspace. **Capacity is not**: it needs the QBG gauge
+(`pm7250b_qg`, vendor `qpnp,qg`), for which mainline has no driver; the
+ADSP-mediated `qcom_battmgr` is not an option while the ADSP restarts every
+41 s (see the sensor PD note above).
