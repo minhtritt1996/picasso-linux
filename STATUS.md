@@ -1553,3 +1553,38 @@ kernel: an SVG pixbuf loader (or an icon theme with PNGs). That is fixable.
 `LumaBoot`/`LumaRoot` inside `userdata`, so running it means writing `userdata`
 (a flash write the owner has deferred) - it cannot live in the 5.3 GB of RAM
 next to the kernel.
+
+### The requested repartition does not fit: userdata holds ~50 GiB of real data
+
+Measured on the phone (read-only survey, nothing written):
+
+| partition | device | size | fs | contents |
+|---|---|---|---|---|
+| `userdata` | sda34 | **87.0 GiB** (sector 2,883,584..25,701,119) | ext4 | `rootfs.img` **32 GB**, `local/` **17 GB**, `media/` 422 MB, `android-data/` 145 MB |
+| `darwin` | sda35 | 20.0 GiB | **APFS** | the HakiOS XNU port's root |
+| `super` | sda33 | ~68 GiB | | Android dynamic partitions |
+| `cache` | sda30 | 384 MiB | ext4 | our logs |
+
+Free space on the disk: **0 sectors** - the GPT ends exactly at the last
+partition. So a new 20 GiB partition can only come from shrinking `userdata`,
+and `userdata` is **~50 GiB used**, which does not fit in 20 GiB. The requested
+layout ("Luma in userdata, the current Droidian content moved to a 20 GB
+`linux`") is therefore impossible as stated: the content to move is 2.5x the
+target size.
+
+Two layouts that do fit, both needing an offline ext4 shrink of `userdata`
+(`e2fsck -f` + `resize2fs`, then delete/recreate the GPT entry keeping name,
+type and PARTUUID, then a new entry for the freed tail):
+
+1. **Luma in a new 20 GiB `linux`, Droidian untouched**: shrink userdata
+   87 -> 67 GiB (50 GiB of data still fits), create `linux` in the freed tail,
+   write the Luma image there. Least destructive; Luma's 9.37 GiB image fits
+   comfortably.
+2. **Luma in userdata, Droidian moved to `linux`**: the new partition would have
+   to be ~50 GiB, i.e. userdata shrinks to ~37 GiB - still larger than Luma's
+   image, so it works, but it needs the 50 GiB copied twice and the shrink done
+   in stages (there is no scratch space for a single pass), which is hours of
+   risky I/O on the only copy of that data.
+
+Either way the Droidian data is unique (no backup exists), so it should be
+copied and verified before anything is deleted or shrunk.
