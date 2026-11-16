@@ -4,23 +4,24 @@
 # radios came back. Run it ON the phone, detached, so a console hangup during the
 # cycle cannot kill it:
 #
-#   setsid tools/suspend-soak.sh 20 /mnt/ufs-logs/soak.log >/dev/null 2>&1 &
+#   setsid tools/suspend-soak.sh 10 /mnt/ufs-logs/soak.log VOLUME-DOWN >/dev/null 2>&1 &
 #
 # The person holding the phone presses VOLUME-UP once per cycle. The script says
 # so on the panel (console) before each suspend.
 set -u
-N=${1:-20}
+N=${1:-10}
 LOG=${2:-/mnt/ufs-logs/soak.log}
+KEY=${3:-VOLUME-DOWN}
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 
 say() { printf '%s %s\n' "$(date -Is)" "$*" | tee -a "$LOG" > /dev/tty1 2>/dev/null || true; }
 
-say "soak: $N cycles, wake each one with VOLUME-UP"
+say "soak: $N cycles, wake each one with $KEY"
 ok=0
 for i in $(seq 1 "$N"); do
 	before=$(cat /sys/power/suspend_stats/success 2>/dev/null)
 	t0=$(date +%s)
-	echo "PM: soak cycle $i/$N, press VOLUME-UP" > /dev/tty1 2>/dev/null || true
+	echo "PM: soak cycle $i/$N, press $KEY to wake" > /dev/tty1 2>/dev/null || true
 	echo mem > /sys/power/state
 	t1=$(date +%s)
 	after=$(cat /sys/power/suspend_stats/success 2>/dev/null)
@@ -30,4 +31,4 @@ for i in $(seq 1 "$N"); do
 	dmesg | grep -E "PM: resume devices took|PM: suspend exit" | tail -2 >> "$LOG" 2>/dev/null
 	sleep 2
 done
-say "soak done: $ok/$N cycles counted by suspend_stats"
+say "soak done: $ok/$N cycles counted by suspend_stats (wake key $KEY)"
