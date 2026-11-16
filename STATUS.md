@@ -1289,3 +1289,31 @@ the only wake source in the list is `pwrkey` (now `wakeup-source`) and
 `pm7250b-usb` (VBUS). The next test is a real s2idle suspend ended by one press
 of the power key; `tools/suspend-test.sh` still refuses to suspend without a
 verified alarm, so this one is driven by hand.
+
+### Real s2idle: the phone powers off instead of resuming (2026-11-16)
+
+With the ladder green, the next step was a real `echo mem`. `pwrkey` is a
+wakeup source in the DT and appears in `wakeup_sources`, so pressing the power
+key should have been the wake event. Instead the phone **turned off**.
+
+On this PMIC that is the signature of **PS_HOLD dropping**, not of a missing
+wake source: when the SoC dies (hang or crash in the resume path) the PMIC cuts
+power a second or two later, which looks exactly like "I pressed the button and
+it switched off". A plain key press while suspended cannot power the phone off
+by itself - the PON only does that on a long hold.
+
+So the remaining problem is the **resume path**, and the evidence to look at is
+the kernel log that `log-to-ufs` writes to the UFS cache partition, not the
+live console (which dies with the SoC). Next: power on, mount the cache
+partition, read `/mnt/ufs-logs/picasso-logs/` for the last lines before
+PS_HOLD, and work backwards from the last driver that printed.
+
+Two smaller follow-ups this exposed:
+
+- `rtc0` still has no `wakealarm`, so the only wake candidates are `pwrkey`
+  (armed, but the press is followed by the SoC dying) and `pm7250b-usb`
+  (VBUS change). An RTC alarm would let a test wake the phone without hands,
+  which matters while the resume path is broken.
+- `enable_irq_wake()` on an SPMI PMIC IRQ only works if the PMIC arbiter chain
+  is wake-capable; worth verifying with `dmesg | grep -i wakeup` after the
+  next boot rather than assuming the DT property was enough.
