@@ -1,4 +1,4 @@
-# mainline-linux-picasso
+# picasso-linux
 
 Mainline Linux on the Xiaomi Redmi K30 5G (`picasso`, Qualcomm SM7250 / Snapdragon 765G),
 booted entirely from RAM through the HakiOS Mu-Silicium UEFI that already runs on this phone.

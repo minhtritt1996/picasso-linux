@@ -1,4 +1,4 @@
-# Quy tắc bắt buộc — `mainline-linux-picasso`
+# Quy tắc bắt buộc — `picasso-linux`
 
 Áp dụng cho mọi thay đổi trong repository này (kernel mainline Linux cho Redmi K30 5G /
 SM7250, boot bằng RAM qua Mu-Silicium UEFI).

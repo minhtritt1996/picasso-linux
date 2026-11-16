@@ -1,4 +1,4 @@
-# Upstream base repositories and revisions for mainline-linux-picasso patches
+# Upstream base repositories and revisions for picasso-linux patches
 
 linux:
   repository: https://github.com/torvalds/linux.git
