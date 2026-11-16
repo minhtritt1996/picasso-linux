@@ -53,7 +53,7 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   - Fixed `drm_dsc_config.pic_width/pic_height` (were 0 -> PPS said 0x0). Still black.
   - Experiment switch in the panel driver: `G7A_NO_DSC 1` (uncompressed link,
     120 Hz, 2.08 Gbps/lane; 60 Hz = 1.04 Gbps/lane also tried).
-  - `tools/linux/init.c` now paints `/dev/fb0` with `/dev/urandom` (2 s after
+  - `tools/init.c` now paints `/dev/fb0` with `/dev/urandom` (2 s after
     start): snow => scanout reaches the panel, logo => data path dead. Result
     pending on hardware.
   - Enabling the PM8150L WLED driver with guessed properties turned the backlight
@@ -82,7 +82,7 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   `remoteproc0/state`.
 - Done: static aarch64 `rmtfs` (udev replaced with the `/sys/class/rmtfs/...`
   sysfs path), `pd-mapper` (lzma stubbed, plain `.jsn` only) and `tqftpserv` in
-  `tools/linux/bin/`, packed into the initramfs by `mkinitramfs.sh`; EFS images
+  `tools/bin/`, packed into the initramfs by `mkinitramfs.sh`; EFS images
   copied from `modemst1`/`modemst2`/`fsc`/`fsg` into `/run/rmtfs` (flash is never
   written). rmtfs answers the modem's EFS requests, pd-mapper loads
   `adspr/adsps/adspua/cdspr/modemr/modemuw.jsn`, QRTR works.
@@ -198,7 +198,7 @@ printf 'help\r' > /dev/ttyACM0 & cat /dev/ttyACM0
   `input: ... Headset Jack`.
 - `&adsp` runs and PDR reports `msm/adsp/audio_pd state 0x1fffffff` at ~4.4 s
   (again at ~44 s after the ADSP user-PD DOG restarts it).
-- `tools/linux/tone` + `tone` console command exist; `open("/dev/snd/pcmC0D0p",
+- `tools/tone` + `tone` console command exist; `open("/dev/snd/pcmC0D0p",
   O_RDWR)` returns EINVAL today (node is controlC0/pcmC0D0p/timer, dev 116:2) -
   next: try O_WRONLY, then instrument which `snd_pcm_open` path rejects it.
 - `drivers/soc/qcom/picasso-pinmux.c` muxes the pads pinctrl cannot (uart5
@@ -434,7 +434,7 @@ now does what the XNU path always did, for Linux:
 - Every early return sets a numbered reason, visible with
   `fastboot getvar result` → `linux-fail N` (1 missing image/initrd/dtb,
   2 /chosen patch, 3 install_configuration_table, 4 LoadImage).
-- `tools/linux/build-bootimg.py --initrd` is optional; `PAYLOAD_NO_INITRD=1
+- `tools/build-bootimg.py --initrd` is optional; `PAYLOAD_NO_INITRD=1
   ./build.sh bootimg` builds such a payload (60 042 232 B).
 
 Verification so far: the flashed loader boots the normal payload (initrd inside
@@ -502,7 +502,7 @@ feed the DSPs their PD map, EFS and firmware over QRTR/TFTP), but the cpio had
 no `/var/lib` at all, so `tqftpserv` could not create its
 `/var/lib/tqftpserv/readwrite` directory and logged on every attempt.
 
-Fixed in `tools/linux/mkinitramfs.sh`:
+Fixed in `tools/mkinitramfs.sh`:
 `/var/lib/tqftpserv/{readonly,readwrite}` and `/var/lib/pd-mapper`.
 
 Verified: the spam is gone (`dmesg tqftpserv` now shows only the service start),
@@ -536,7 +536,7 @@ docker run --rm --platform linux/amd64 -v /tmp/luma:/luma:ro -v /tmp/armroot3:/o
 # then, in a root container:  usr/sbin + sbin symlink, /dev /proc /sys /run /tmp,
 # empty /etc/machine-id, dbus.service alias (lost with noscripts), users via
 # systemd-sysusers --root, the usbacm.service unit + serial-getty@ttyGS0 autologin
-tools/linux/pack-rootfs.sh   # or the same cpio/gzip inside the container
+tools/pack-rootfs.sh   # or the same cpio/gzip inside the container
 ```
 
 Remaining failures in that boot, all understood: `dbus.socket: service not
@@ -545,7 +545,7 @@ loaded` (alias missing because the scriptlets were skipped — now created),
 (no firmware partition mounted), `dpu_crtc_atomic_flush: crtc pending` on the
 DPU, and `snd-sm8250: MultiMedia1: error getting cpu dai name`.
 
-`tools/linux/usbacm.c` brings the CDC-ACM gadget up from systemd
+`tools/usbacm.c` brings the CDC-ACM gadget up from systemd
 (`usbacm.service`, stays resident) and `serial-getty@ttyGS0` autologs root, so
 the Fedora userspace is reachable over the same USB cable (1d6b:0104).
 
@@ -611,7 +611,7 @@ the Fedora userspace is reachable over the same USB cable (1d6b:0104).
 
 What is proven on hardware today:
 
-- `pd-mapper` (static, from `tools/linux/bin`), `rmtfs` (seeded from the phone's
+- `pd-mapper` (static, from `tools/bin`), `rmtfs` (seeded from the phone's
   own `modemst1`/`modemst2`/`fsc`/`fsg` via `rmtfs-seed.service`) and
   `tqftpserv` all run in Fedora; `qrtr-lookup` shows the expected node 1
   services (14 remote-fs, 4096 TFTP, 64 registry locator).

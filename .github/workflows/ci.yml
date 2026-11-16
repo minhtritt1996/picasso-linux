@@ -1,0 +1,91 @@
+name: picasso-linux CI
+
+# Four gates (see .github/workflows/README.md and AGENTS.md):
+#   1 preflight  hosted runner, every push and PR
+#   2 change     review checklist (drivers in patches/, upstream edits exported)
+#   3 CI         self-hosted, applies the series to a clean upstream and builds
+#   4 hardware   self-hosted with the phone, RAM boot only
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '17 4 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: Gate 1 - preflight (hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # policy-scan reads patch pins and the series; it does not need upstream/
+      - name: Preflight (documents, policy, series, syntax, whitespace)
+        run: tools/preflight.sh --ci
+
+  build:
+    name: Gate 3 - clean-tree check and build
+    needs: policy
+    # Self-hosted runners hold the provisioned upstream clones and the UEFI
+    # binaries: never run fork code on them.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, picasso-upstream]
+    timeout-minutes: 120
+    env:
+      # Provisioned on the runner, gitignored in this repository.
+      UEFI_FD: ${{ vars.PICASSO_UEFI_FD }}
+      BOOTSHIM: ${{ vars.PICASSO_BOOTSHIM }}
+      UEFI_DTB: ${{ vars.PICASSO_UEFI_DTB }}
+      PAYLOAD_NO_INITRD: '1'
+    steps:
+      # clean: false keeps upstream/ and build/ (gitignored, provisioned).
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Series applies to a clean upstream tree (./build.sh check)
+        run: ./build.sh check
+      - name: Kernel and DTB from a clean tree
+        run: ./build.sh linux --clean
+      - name: Loader and boot images
+        run: |
+          set -euo pipefail
+          ./build.sh loader
+          ./build.sh bootimg
+          ./build.sh bootimg-luma
+
+  hardware:
+    name: Gate 4 - RAM-boot cycle
+    needs: build
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'hardware-test')) }}
+    runs-on: [self-hosted, picasso-phone, ram-boot-only]
+    timeout-minutes: 45
+    concurrency:
+      group: picasso-phone
+      cancel-in-progress: false
+    env:
+      CAPTURE: '60'
+      REBOOT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Refuse anything but the RAM loader
+        run: |
+          set -euo pipefail
+          product=$(timeout 10 fastboot getvar product 2>&1 | head -n 1 || true)
+          case "$product" in
+            *xnuloader*) echo "loader: $product" ;;
+            *) echo "refusing: phone is not in the RAM loader ($product)" >&2; exit 1 ;;
+          esac
+      - name: One RAM-boot cycle (never flashes)
+        run: tools/ramboot-cycle.sh --reboot --capture 60
+      - name: Console log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-log
+          path: build/logs/console.log
+          if-no-files-found: ignore

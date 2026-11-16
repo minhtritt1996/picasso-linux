@@ -160,7 +160,7 @@ build_bootimg() {
 	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
 	[ -f "$OUT/linux.efi" ] || die "run ./build.sh loader first"
 	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
-	[ -n "${PAYLOAD_NO_INITRD:-}" ] || [ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/linux/mkinitramfs.sh" >/dev/null
+	[ -n "${PAYLOAD_NO_INITRD:-}" ] || [ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/mkinitramfs.sh" >/dev/null
 	[ -f "$fd" ] || die "set UEFI_FD=/path/to/SILICIUM_UEFI.fd"
 	[ -f "$shim" ] || die "set BOOTSHIM=/path/to/BootShim.bin"
 	[ -f "$udtb" ] || die "set UEFI_DTB=/path/to/picasso.dtb"
@@ -174,7 +174,7 @@ clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10}"
 	# PAYLOAD_NO_INITRD=1: no initrd in the container; Linux boots the resident
 	# image sent with "fastboot oem ramdisk" (the loader patches /chosen)
 	[ -n "${PAYLOAD_NO_INITRD:-}" ] || initrd_arg=(--initrd "$OUT/initrd.cpio.gz")
-	python3 "$ROOT/tools/linux/build-bootimg.py" \
+	python3 "$ROOT/tools/build-bootimg.py" \
 		-o "$OUT/boot-linux.img" --payload-out "$OUT/payload-linux.bin" \
 		--loader "$OUT/linux.efi" --image "$OUT/Image" \
 		"${initrd_arg[@]}" \
@@ -188,8 +188,8 @@ clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10}"
 build_bootimg_luma() {
 	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
 	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
-	[ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/linux/mkinitramfs.sh" >/dev/null
-	python3 "$ROOT/tools/linux/build-luma-bootimg.py" \
+	[ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/mkinitramfs.sh" >/dev/null
+	python3 "$ROOT/tools/build-luma-bootimg.py" \
 		--image "$OUT/Image" --initrd "$OUT/initrd.cpio.gz" \
 		--dtb "$OUT/sm7250-xiaomi-picasso.dtb" -o "$OUT/boot-luma.img" \
 		${LUMA_CMDLINE:+--cmdline "$LUMA_CMDLINE"}
@@ -266,7 +266,14 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bluetooth delta to export)"
 	fi
-	echo "    [OK] regenerated; run ./build.sh check"
+	# A patch that exists but is not in the series is applied locally and
+	# silently dropped from every clean build: refuse to leave it that way.
+	for p in "$PATCHES"/linux/picasso/*.patch; do
+		rel=${p#"$PATCHES"/linux/}
+		grep -qxF "$rel" "$PATCHES/linux/series" ||
+			die "$rel is not listed in patches/linux/series"
+	done
+	echo "    [OK] regenerated and listed in patches/linux/series; run ./build.sh check"
 }
 
 run_check() {
@@ -277,7 +284,7 @@ run_check() {
 		PATH="$ROOT/.venv-dtschema/bin:$PATH"
 	elif ! command -v dt-doc-validate >/dev/null; then
 		echo "    [WARN] dt-doc-validate not found: skipping dtbs_check"
-		echo "           ./scripts/setup-dtschema.sh"
+		echo "           ./tools/setup-dtschema.sh"
 		check_dtbs=0
 	fi
 	tmp=$(mktemp -d)

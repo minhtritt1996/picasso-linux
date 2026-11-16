@@ -47,10 +47,14 @@ TAGS_OFFSET = 0x100
 DTB_OFFSET = 0x1728000
 PAGE_SIZE = 4096
 
+# The Luma device-kit builder refuses a boot image whose command line does not
+# name the generic phone userdata image's two filesystems, so the defaults
+# already carry them (ROOT_UUID / BOOT_UUID below).
 DEFAULT_CMDLINE = (
     'console=tty0 loglevel=7 picasso_pinmux.mode=write '
     'rdinit=/usr/lib/systemd/systemd systemd.show_status=1 '
-    'clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10'
+    'clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10 '
+    'pmos_root_uuid=' + ROOT_UUID + ' pmos_boot_uuid=' + BOOT_UUID
 )
 
 

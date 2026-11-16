@@ -22,17 +22,44 @@ Nothing is written to UFS. `upstream/` is read-only; every change lives in `patc
 ## Layout
 
 ```text
-upstream/linux              torvalds/linux, pinned tag (read-only)
-upstream/avicii-mainline    reference port, pinned commit (read-only)
-patches/linux/UPSTREAM      pins
-patches/linux/series        ordered patch list
+upstream/linux              torvalds/linux v7.3-rc7, pinned (read-only, gitignored)
+upstream/avicii-mainline    reference SM7250 port, pinned (read-only, gitignored)
+upstream/hakios-xnu-kernel  XnuLoader source for the EFI launcher (read-only, gitignored)
+
+patches/linux/UPSTREAM      the pins above, single source of truth
+patches/linux/series        ordered patch list (vendor/ first, then picasso/)
 patches/linux/vendor/       avicii patches, unmodified
-patches/linux/picasso/      this device's deltas
+patches/linux/picasso/      this device's deltas, exported from build/linux
+
 configs/linux/              kernel config fragments
-tools/linux/                boot image + initramfs tooling
-uefi/linuxloader/           linux.efi (EDK2 app) source
-build/                      isolated build tree and build/out artifacts
+tools/                      boot images, initramfs, console, gates
+  build-bootimg.py          XNUP payload + boot-linux.img (UEFI chain)
+  build-luma-bootimg.py     Android boot v2 image for the stock ABL path
+  mkinitramfs.sh            the small bring-up initramfs
+  pack-rootfs.sh            the big RAM root filesystem
+  console_cmd.py            USB-ACM console: one command, capture, reboot
+  ramboot-cycle.sh          one hardware gate cycle (arm, stage, run, log)
+  policy-scan.sh            gate 1 rules
+  preflight.sh              gate 1 locally / gate 3 static half in CI
+prebuilt/                   identity.h and small device data (no vendor firmware)
+userland/fedora/            systemd units and configs baked into the RAM root
+docs/                       plan, Luma port brief, DTS crosswalk
+.github/                    workflows, gate documentation, PR template
+build/                      isolated build tree and build/out artifacts (gitignored)
 ```
+
+## Gates
+
+Four gates keep the working tree honest; they are described in
+[`.github/workflows/README.md`](.github/workflows/README.md) and enforced by
+`tools/preflight.sh` + `.github/workflows/ci.yml`:
+
+| Gate | Command | What it proves |
+|---|---|---|
+| 1 preflight | `tools/preflight.sh` | documents, policy scan, patch series, syntax, whitespace |
+| 2 change | PR checklist | kernel changes only as exported patches; `vendor/` untouched |
+| 3 CI | `./build.sh check` + clean builds | 22 patches apply to a clean upstream; every artifact builds |
+| 4 hardware | `tools/ramboot-cycle.sh` | one RAM boot: arm, stage, run, capture. Never flashes |
 
 ## Build
 
@@ -47,7 +74,7 @@ The ramdisk and the boot image are built by the tools, because they need HakiOS 
 are not vendored here:
 
 ```sh
-./tools/linux/mkinitramfs.sh    # build/out/initrd.cpio.gz (static init, ~0.3 MB)
+./tools/mkinitramfs.sh    # build/out/initrd.cpio.gz (static init, ~0.3 MB)
 
 UEFI_FD=<SILICIUM_UEFI.fd> BOOTSHIM=<BootShim.bin> UEFI_DTB=<picasso.dtb> \
   ./build.sh bootimg            # build/out/boot-linux.img + payload-linux.bin
@@ -58,7 +85,7 @@ existing HakiOS build tree (they are not part of this repository). `CMDLINE="...
 `/chosen/bootargs`.
 
 `check` runs `dtbs_check` through a repo-local dtschema; set it up once with
-`./scripts/setup-dtschema.sh` (no root, gitignored venv). Without it, `check` applies and
+`./tools/setup-dtschema.sh` (no root, gitignored venv). Without it, `check` applies and
 builds the series but skips the schema validation with a warning.
 
 Requires: `aarch64-linux-gnu-gcc`, `make`, `bison`, `flex`, `bc`, `libssl-dev`, `libelf-dev`,

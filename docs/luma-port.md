@@ -134,7 +134,7 @@ workspace has actually observed; everything else is `not yet`.
    needed; `boot.toml [avb] footer` can stay `none` unless a boot fails without it.
 7. **The boot image target exists**: `./build.sh bootimg-luma` builds
    `build/out/boot-luma.img` from `Image`, `build/out/initrd.cpio.gz` and the
-   picasso DTB with `tools/linux/build-luma-bootimg.py`. It refuses a command
+   picasso DTB with `tools/build-luma-bootimg.py`. It refuses a command
    line without `pmos_root_uuid`/`pmos_boot_uuid`, refuses overlapping
    kernel/ramdisk/DTB load addresses and an image over the partition limit, and
    re-reads the result with `unpack_bootimg`. Current image: 20 299 776 B,

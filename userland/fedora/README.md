@@ -30,7 +30,7 @@ for u in usbacm ttygs-shell weston fw-setup log-to-ufs.timer; do
   ln -sfn /usr/lib/systemd/system/$u.* $R/etc/systemd/system/multi-user.target.wants/
 done
 ln -sfn /usr/lib/systemd/system/log-to-ufs.timer $R/etc/systemd/system/timers.target.wants/
-install -D -m755 tools/linux/usbacm tools/linux/fw-setup.sh tools/linux/log-to-ufs.sh $R/usr/local/bin/
+install -D -m755 tools/usbacm tools/fw-setup.sh tools/log-to-ufs.sh $R/usr/local/bin/
 install -D -m644 userland/fedora/*.service userland/fedora/*.timer $R/usr/lib/systemd/system/
 install -D -m644 userland/fedora/pamd/system-auth userland/fedora/pamd/postlogin $R/etc/pam.d/
 cp prebuilt/fw-gpu/* $R/lib/firmware/qcom/     # Adreno zap/GMU/SQE

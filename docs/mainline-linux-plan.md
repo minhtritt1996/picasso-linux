@@ -204,9 +204,9 @@ patches/linux/picasso/0001..N.patch # delta của picasso
 patches/loader/                     # patch nhỏ lên xnuloader (thêm nhánh boot Image)
 configs/linux/base.config           # arm64 defconfig + EFI/simpledrm/initramfs
 configs/linux/picasso.config        # UFS, USB, PMIC, drm/msm, ath10k...
-tools/linux/build-bootimg.py        # XNUP{linux.efi,Image,initrd,dtb} + boot image
-tools/linux/mkinitramfs.sh          # ramdisk: init tĩnh (in máy, tự reboot nếu được yêu cầu)
-tools/linux/init.c                  # /init của ramdisk
+tools/build-bootimg.py        # XNUP{linux.efi,Image,initrd,dtb} + boot image
+tools/mkinitramfs.sh          # ramdisk: init tĩnh (in máy, tự reboot nếu được yêu cầu)
+tools/init.c                  # /init của ramdisk
 ```
 
 ### 3.2 Series patch
@@ -323,7 +323,7 @@ và để cô lập lỗi.
    - giữ nguyên toàn bộ fastboot listener sẵn có (`stage`, `oem run`) — nhờ vậy vòng iterate
      dùng lại đúng giao thức của XNU, không phải viết USB stack mới.
    Build: `./build.sh loader` → `build/out/linux.efi` (cần `IDENTITY_H` cho upstream).
-2. `tools/linux/build-bootimg.py`: `gzip(BootShim + FD + XNUP{loader.efi=linux.efi, Image,
+2. `tools/build-bootimg.py`: `gzip(BootShim + FD + XNUP{loader.efi=linux.efi, Image,
    initrd.cpio.gz, picasso.dtb}) + UEFI dtb` (dtb section vẫn là `picasso.dtb` của UEFI, không
    phải DTB mainline). Initrd là cpio.gz với init tĩnh, hiện ~0.3 MiB, phải < 12 MiB để vừa
    ngân sách 64 MiB.
@@ -347,7 +347,7 @@ và để cô lập lỗi.
 fastboot boot build/out/boot-linux.img
 
 # mỗi lần sửa kernel/initrd/dtb: repack rồi stage cả payload, không upload lại UEFI
-./tools/linux/build-bootimg.py ... --payload-out build/out/payload-linux.bin
+./tools/build-bootimg.py ... --payload-out build/out/payload-linux.bin
 fastboot stage build/out/payload-linux.bin
 fastboot oem run
 ```
@@ -360,7 +360,7 @@ khi kịp stage, quay lại `fastboot boot` từ bootloader (RAM-only). Khi có 
 
 ### P2 — initramfs + USB
 
-1. `tools/linux/mkinitramfs.sh`: busybox + `init` tối giản in `uname -a`, `nproc`, mount
+1. `tools/mkinitramfs.sh`: busybox + `init` tối giản in `uname -a`, `nproc`, mount
    proc/sys/dev, bật gadget NCM+ACM giống `initramfs/init` của avicii, telnet/shell; thêm
    `reboot` (đưa về loader) và, khi có USB network, `kexec` để thay kernel không cần reset.
 2. DTS: `usb@a600000` (dwc3), QMP PHY, SS PHY, `iommus` (stream ID từ vendor DT), `rpmhpd`,
@@ -456,7 +456,7 @@ khi kịp stage, quay lại `fastboot boot` từ bootloader (RAM-only). Khi có 
 2. Copy 14 patch vào `patches/linux/vendor/`, tạo `series`, kiểm tra apply sạch.
 3. Viết `build.sh linux` + `configs/linux/{base,picasso}.config`; build `Image` + dtb.
 4. Viết `picasso/0001` (reserved-memory) và `picasso/0002` (DTS tối thiểu); `dtbs_check`.
-5. Viết `uefi/linuxloader/` + `tools/linux/build-bootimg.py`.
+5. Viết `uefi/linuxloader/` + `tools/build-bootimg.py`.
 6. Boot M1, chụp panel, lưu ảnh + log vào `note.md`.
 7. Viết initramfs USB, đạt M2, rồi mới mở UFS.
 8. Sau mỗi mốc: `./build.sh export-linux-patches`, cập nhật `note.md` và `device.conf`

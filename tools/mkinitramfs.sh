@@ -3,7 +3,7 @@
 # The root filesystem is always this ramdisk, packed as entry "initrd" and
 # handed over through /chosen/linux,initrd-*.
 #
-#   tools/linux/mkinitramfs.sh [OUT]   default: build/out/initrd.cpio.gz
+#   tools/mkinitramfs.sh [OUT]   default: build/out/initrd.cpio.gz
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 OUT=${1:-$ROOT/build/out/initrd.cpio.gz}
@@ -19,7 +19,7 @@ mkdir -p "$TMP/dev" "$TMP/proc" "$TMP/sys" "$TMP/tmp" "$TMP/run"
 # pd-mapper keeps its PD map here
 mkdir -p "$TMP/var/lib/tqftpserv/readonly" "$TMP/var/lib/tqftpserv/readwrite" \
 	 "$TMP/var/lib/pd-mapper"
-"$CC" -static -Os -s -o "$TMP/init" "$ROOT/tools/linux/init.c"
+"$CC" -static -Os -s -o "$TMP/init" "$ROOT/tools/init.c"
 chmod 755 "$TMP/init"
 
 # GPU firmware (vendor blobs, kept out of git): zap shader + GMU + SQE
@@ -48,11 +48,11 @@ if [ -f "$KMOD/modules.order" ]; then
 	echo "    [OK] modules: $(wc -l < "$TMP/lib/modules/load.order") packed"
 fi
 
-# prebuilt static helpers (rmtfs, pd-mapper): see tools/linux/bin/README
+# prebuilt static helpers (rmtfs, pd-mapper): see tools/bin/README
 mkdir -p "$TMP/bin" "$TMP/run/rmtfs"
-"$CC" -static -Os -s -o "$TMP/bin/tone" "$ROOT/tools/linux/tone/tone.c"
-if compgen -G "$ROOT/tools/linux/bin/*" >/dev/null; then
-	cp "$ROOT"/tools/linux/bin/* "$TMP/bin/"
+"$CC" -static -Os -s -o "$TMP/bin/tone" "$ROOT/tools/tone/tone.c"
+if compgen -G "$ROOT/tools/bin/*" >/dev/null; then
+	cp "$ROOT"/tools/bin/* "$TMP/bin/"
 	chmod 755 "$TMP"/bin/*
 fi
 

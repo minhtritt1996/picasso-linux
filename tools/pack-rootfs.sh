@@ -2,7 +2,7 @@
 # Pack a userspace tree into the gzip cpio the kernel takes as an initramfs,
 # for the loader's resident-ramdisk channel:
 #
-#   tools/linux/pack-rootfs.sh /tmp/armroot2 build/out/fedora.cpio.gz
+#   tools/pack-rootfs.sh /tmp/armroot2 build/out/fedora.cpio.gz
 #   fastboot oem ramdisk
 #   fastboot stage build/out/fedora.cpio.gz
 #   fastboot stage build/out/payload-linux.bin     (PAYLOAD_NO_INITRD=1)
