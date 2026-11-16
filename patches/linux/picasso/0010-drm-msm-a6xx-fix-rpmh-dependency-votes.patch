@@ -1,0 +1,23 @@
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index c7485c9b0..66790602c 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -1870,13 +1870,15 @@ static int a6xx_gmu_rpmh_votes_init(struct a6xx_gmu *gmu)
+ 	ret = a6xx_gmu_rpmh_arc_votes_init(&gpu->pdev->dev, gmu->gx_arc_votes,
+ 		gmu->gpu_freqs, gmu->nr_gpu_freqs, "gfx.lvl", sec_id);
+ 
++	/* Dependency votes are GPU frequencies: resolve them on the GPU device,
++	 * not on the GMU device (upstream eab0aff89). */
++	ret |= a6xx_gmu_rpmh_dep_votes_init(&gpu->pdev->dev, gmu->dep_arc_votes,
++		gmu->gpu_freqs, gmu->nr_gpu_freqs);
++
+ 	/* Build the CX votes */
+ 	ret |= a6xx_gmu_rpmh_arc_votes_init(gmu->dev, gmu->cx_arc_votes,
+ 		gmu->gmu_freqs, gmu->nr_gmu_freqs, "cx.lvl", "mx.lvl");
+ 
+-	ret |= a6xx_gmu_rpmh_dep_votes_init(gmu->dev, gmu->dep_arc_votes,
+-		gmu->gpu_freqs, gmu->nr_gpu_freqs);
+-
+ 	/* Build the interconnect votes */
+ 	if (info->bcms && gmu->nr_gpu_bws > 1)
+ 		ret |= a6xx_gmu_rpmh_bw_votes_init(adreno_gpu, info, gmu);

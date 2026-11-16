@@ -1,0 +1,16 @@
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+index 081e79ea4..2a674a26e 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -2183,10 +2183,9 @@ static int a6xx_pm_resume(struct msm_gpu *gpu)
+ 		ret = PTR_ERR(opp);
+ 		goto err_set_opp;
+ 	}
+-	dev_pm_opp_put(opp);
+-
+ 	/* Set the core clock and bus bw, having VDD scaling in mind */
+ 	dev_pm_opp_set_opp(&gpu->pdev->dev, opp);
++	dev_pm_opp_put(opp);
+ 
+ 	pm_runtime_resume_and_get(gmu->dev);
+ 	pm_runtime_resume_and_get(gmu->gxpd);

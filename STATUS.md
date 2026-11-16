@@ -953,3 +953,72 @@ Connected to <bssid> (on wlan0)
 `ping` is not installed in this image; use `getent hosts` or `curl` for
 reachability. `user@0.service` fails (no `hostname`/PAM pieces in the trimmed
 root), harmless for the console and ssh paths.
+
+### Audio — WORKS (2026-11-16): the ADSP was simply never started
+
+`/proc/asound/cards` was empty because the ADSP never came up:
+
+```
+remoteproc0: Direct firmware load for qcom/sm7250/xiaomi/picasso/image/adsp.mdt failed with error -2
+platform sound: deferred probe pending: snd-sm8250: MultiMedia1: error getting cpu dai name
+```
+
+The remoteproc probes during kernel init, before `fw-mount` has mounted the
+phone's `modem`/`dsp` partitions, so the load fails with `-ENOENT` and the
+remoteproc stays `offline` for good — nothing re-triggers it. `fw-start.sh`
+started **only the modem**; extending it to start the `adsp` remoteproc as well
+makes the whole audio stack come up by itself:
+
+```
+remoteproc0: remote processor adsp is now up
+PDR: Indication received from msm/adsp/audio_pd, state: 0x1fffffff
+qcom,apr ... Adding APR/GPR dev: aprsvc:service:4:7      (q6asm DAIs)
+Xiaomi-Redmi-K30-5G Headset Jack as .../card0/input4
+card 0: XiaomiRedmiK305 [Xiaomi-Redmi-K30-5G], device 0: MultiMedia1
+```
+
+The service then waits for the card and applies the board's only route
+(`SEC_MI2S_RX Audio Mixer MultiMedia1=1`) and the speaker gain, retrying until
+the mixer takes, and stores the state with `alsactl store`. Verified on a clean
+boot with no manual step:
+
+| check | result |
+|---|---|
+| `remoteproc0` (ADSP) / `remoteproc1` (modem) | `running` / `running` |
+| `aplay -l` | `card 0 ... device 0: MultiMedia1` |
+| mixer route | `SEC_MI2S_RX Audio Mixer MultiMedia1` = `on` |
+| `speaker-test -D hw:0,0 -t sine -f 440 -c 2 -l 1` | plays, no error (5.23 s period) |
+| amp after playback | `tfa9874 0-0034: status 0x0017 clk 0xe2c2 sys 0x0018 gain 0x027c tdm 0x0890/0xc0f1` |
+
+Audibility from the speaker itself has not been confirmed by ear yet — every
+stage below it reports healthy (DSP stream open, MI2S TDM locked, amp CLKS/AMPE/
+DCA on, gain 0x027c).
+
+### GPU (Adreno 620) — still faulting; two upstream bugs fixed on the way
+
+Weston and `kmscube` still trip `gpu fault ring 0 ... status 00800007` and the
+DPU hangcheck recovers about once per frame at startup and once per render
+afterwards. Measured with the vendor's `weston` and `kmscube`:
+
+| build | faults at boot | during 20 s of weston | during 10 s of kmscube |
+|---|---|---|---|
+| before | 60 | 0 | 2 |
+| + `8128ae7af` (OPP use-after-free in `a6xx_pm_resume`) | 38 | 0 | 2 |
+| + `eab0aff89` (RPMH dependency votes on the wrong device) | 36 | 0 | 2 |
+
+Both fixes are real and are exported as patches `0009`/`0010`, but neither is the
+cause. What the crashstate says (`/sys/class/devcoredump/devcd1/data`):
+
+- ring buffer `rptr == wptr` — the CP has consumed every command;
+- the fence never retires, and `RBBM_STATUS` reads `0x00800007`
+  (`GPU_BUSY_IGN_AHB | CP_BUSY | CP_AHB_BUSY_{CP,CX}_MASTER`): the CP is stuck in
+  an AHB transaction, not in a memory/SMMU fault (no `arm-smmu` fault is logged);
+- the address of the first fault is always the same shape: `ib1 0/0 ib2 0/0`,
+  i.e. the new ringbuffer-style submission with no IBs.
+
+Next, in order: (1) apply the sibling fix `86f80884f` (clamp MX dependency vote —
+needs the newer `a6xx_gmu_rpmh_arc_index` signature); (2) compare the GMU boot
+sequence against the reference avicii port byte for byte (same SoC, GPU reported
+working there) using their `.config`; (3) bisect `-rc7` against `v7.3` for a6xx
+HFI/power changes, since the fault looks like a GMU/CP handshake problem rather
+than a rendering bug.

@@ -256,6 +256,26 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bring-up delta to export)"
 	fi
+	local p9="picasso/0009-drm-msm-a6xx-fix-opp-use-after-free.patch"
+	echo "==> Exporting $p9"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/gpu/drm/msm/adreno/a6xx_gpu.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$p9"
+	else
+		rm -f "$t"
+		echo "    (no a6xx delta to export)"
+	fi
+	local p10="picasso/0010-drm-msm-a6xx-fix-rpmh-dependency-votes.patch"
+	echo "==> Exporting $p10"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/gpu/drm/msm/adreno/a6xx_gmu.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$p10"
+	else
+		rm -f "$t"
+		echo "    (no a6xx_gmu delta to export)"
+	fi
 	local p8="picasso/0008-bluetooth-hci-qca-wcn3991-flow-control.patch"
 	echo "==> Exporting $p8"
 	t=$(mktemp)
@@ -268,9 +288,9 @@ export_patches() {
 	fi
 	# A patch that exists but is not in the series is applied locally and
 	# silently dropped from every clean build: refuse to leave it that way.
-	for p in "$PATCHES"/linux/picasso/*.patch; do
-		rel=${p#"$PATCHES"/linux/}
-		grep -qxF "$rel" "$PATCHES/linux/series" ||
+	for p in "$PATCHES"/picasso/*.patch; do
+		rel="picasso/${p##*/}"
+		grep -qxF "$rel" "$PATCHES/series" ||
 			die "$rel is not listed in patches/linux/series"
 	done
 	echo "    [OK] regenerated and listed in patches/linux/series; run ./build.sh check"
