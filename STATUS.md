@@ -1192,3 +1192,13 @@ both actionable:
 `#ifdef CONFIG_PM_SLEEP_DEBUG`, `kernel/power/main.c:384`) — to re-check on the
 next boot; until it appears, the ladder cannot be driven and only whole-system
 s2idle can be tested (with an armed alarm).
+
+Offline validation: `./build.sh linux` completed; `tools/preflight.sh --full`
+completed with `preflight: OK`, including `./build.sh check` (25 patches apply
+on clean upstream; dtbs_check reports 13 existing vendor-series diagnostics).
+Installed all three decoded blobs in the root-owned Fedora root tree using
+`picasso-pack`, and repacked the resident initramfs as root in that container.
+Lockdown is not a touch-bootloader register: downstream
+`techpack/display/msm/dsi/dsi_panel_mi.c:dsi_panel_lockdown_info_read` reads eight
+bytes through panel DSI commands after panel initialization. No SPI OTP address
+is invented here; obtaining those bytes still needs a separate DSI read path.

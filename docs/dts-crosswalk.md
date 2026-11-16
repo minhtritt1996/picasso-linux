@@ -70,3 +70,12 @@ toàn bộ phần cứng trên máy này). Mỗi giá trị đưa vào DTS mainl
 |---|---|---|
 | PHY | `lito-mtp.dtsi:54-76` | `qcom,ufs-phy-qmp-v4-lito`; `vcc = pm8150a_l7`, `vddp-ref-clk = pm8150_l9` |
 | controller | `lito.dtsi` (ufshc@1d84000) | cần bổ sung dòng cụ thể khi làm M3 |
+
+### Novatek SRAM host-download registers
+
+Source: downstream `drivers/input/touchscreen/nt36672c/nt36xxx_mem_map.h`,
+`NT36675_memory_map`, selected by trim ID `0c 00 00 72 66 03` (`hw_crc=2`).
+BOOT_RDY=0x3f10d; ILM/DLM destination=0x3f128/0x3f12c;
+length=0x3f118/0x3f130 (three bytes); golden CRC=0x3f100/0x3f104;
+CRC enable=0x3f30e (bit 7). Event reset/host-command offsets=0x60/0x50.
+These are controller SRAM/register accesses, with no persistent flash program.
