@@ -24,7 +24,7 @@ DIR=$MNT/picasso-logs
 
 mkdir -p "$MNT" || exit 0
 if ! mountpoint -q "$MNT"; then
-	mount -t ext4 -o rw,noatime "$DEV" "$MNT" 2>/dev/null || exit 0
+	mount -t ext4 -o rw,noatime,sync "$DEV" "$MNT" 2>/dev/null || exit 0
 	mounted=1
 else
 	mounted=0
@@ -34,6 +34,9 @@ mkdir -p "$DIR" 2>/dev/null || { [ "$mounted" = 1 ] && umount "$MNT"; exit 0; }
 STAMP=$(date +%Y%m%d-%H%M%S)
 journalctl -b --no-pager -o short-monotonic > "$DIR/journal-$STAMP.log" 2>/dev/null || true
 dmesg > "$DIR/dmesg-$STAMP.log" 2>/dev/null || true
+# A resume that kills the SoC leaves no post-log, so also keep one rolling copy
+# that a sleep hook can append to without a new mount.
+dmesg > "$DIR/dmesg-last.log" 2>/dev/null || true
 cp /proc/cmdline "$DIR/cmdline-$STAMP.txt" 2>/dev/null || true
 sync
 # keep the newest 20 boots, and never fill the partition
