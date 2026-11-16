@@ -84,7 +84,9 @@ UEFI_FD=<SILICIUM_UEFI.fd> BOOTSHIM=<BootShim.bin> UEFI_DTB=<picasso.dtb> \
 existing HakiOS build tree (they are not part of this repository). `CMDLINE="..."` overrides
 `/chosen/bootargs`.
 
-`check` runs `dtbs_check` through a repo-local dtschema; set it up once with
+`check` runs `dtbs_check` through a repo-local dtschema; set it up once with `tools/setup-dtschema.sh`
+(a virtualenv is not relocatable: re-run it after moving the checkout, or `check`
+fails with `dtschema minimum version is v2024.4`)
 `./tools/setup-dtschema.sh` (no root, gitignored venv). Without it, `check` applies and
 builds the series but skips the schema validation with a warning.
 
