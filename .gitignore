@@ -12,3 +12,9 @@ __pycache__/
 # Local dtschema install used by ./build.sh check
 /.venv-dtschema/
 prebuilt/fw-gpu/
+
+# Build artifacts that must never be tracked
+/out/
+# Vendor firmware is read from the phone at runtime, never committed
+prebuilt/fw-*/
+prebuilt/*.dtb
