@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..806f17c17
+index 000000000..d475a7c4e
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,707 @@
+@@ -0,0 +1,717 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -652,6 +652,16 @@ index 000000000..806f17c17
 +};
 +
 +/* GPU: Adreno 620 + GMU (firmware packed into the initramfs) */
++/* Panel backlight: the PM8150L WLED boost converter (vendor
++ * qcom,string-cfg = <7>, qcom,ovp = <28000>). Without this node the panel scans
++ * out frames but the display stays dark: nothing drives the LED strings. */
++&pm8150l_wled {
++	status = "okay";
++	/* only one of num-strings / enabled-strings may be given */
++	qcom,enabled-strings = <0 1 2>;
++	qcom,ovp-millivolt = <28000>;
++};
++
 +&gpu {
 +	status = "okay";
 +};

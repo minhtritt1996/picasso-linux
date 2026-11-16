@@ -66,5 +66,25 @@ else
 	echo "fw-setup: audio route could not be set (no card after 30 s)" >&2
 fi
 
+# Backlight: the PM8150L WLED registers a backlight device; turn it on at 40 %.
+# Nothing else does, and the bootloader's brightness does not survive handover.
+i=0
+while [ $i -lt 20 ]; do
+	bl=$(ls -d /sys/class/backlight/* 2>/dev/null | head -n 1)
+	[ -n "$bl" ] && break
+	sleep 0.5
+	i=$((i + 1))
+done
+if [ -n "${bl:-}" ]; then
+	max=$(cat "$bl/max_brightness" 2>/dev/null || echo 0)
+	if [ "${max:-0}" -gt 0 ]; then
+		echo 0 > "$bl/bl_power" 2>/dev/null || true
+		echo $((max * 2 / 5)) > "$bl/brightness" 2>/dev/null || true
+		echo "fw-setup: backlight ${bl##*/} at $((max * 2 / 5))/$max"
+	fi
+else
+	echo "fw-setup: no backlight device" >&2
+fi
+
 echo "fw-setup: $(ls "$FW/image" 2>/dev/null | wc -l) firmware files"
 exit 0
