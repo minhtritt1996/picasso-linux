@@ -1257,3 +1257,35 @@ Fixed in the rootfs (and repacked, sha256 `2cd4790c…`):
 So the pm_test result stands and is better than it looked: the SoC resumes from
 `freezer`, `devices`, `platform`, `processors` and `core` — the kernel does not
 hang in suspend — and only the observation channel was lost.
+
+### pm_test ladder result: freezer, devices and platform all pass (2026-11-16)
+
+Run detached, logged to the UFS cache partition (`/mnt/ufs-logs/pmtest.log`,
+mounted from the `cache` partition), read back over the USB console:
+
+```
+freezer   -> PM: suspend debug: Waiting for 5 second(s). / PM: suspend exit
+devices   -> pass (the USB gadget re-enumerates afterwards)
+platform  -> pass
+processors, core -> "PM: Unsupported test mode for suspend to idle,
+                    please choose none/freezer/devices/platform."
+suspend_stats: success 3, fail 2
+```
+
+So the freeze, device-suspend and platform-suspend phases complete and resume on
+this SoC; `processors`/`core` are refused by the kernel because this platform
+only offers **s2idle**, not shallow/deep. Two things now make the ladder
+survivable and repeatable:
+
+- `ttygs-shell.service` is `Restart=always`, so the USB console comes back after
+  the gadget re-enumerates (it did, on the same `/dev/ttyACM0`);
+- `usb0-up.service` assigns `192.168.7.2/24` and the host side `192.168.7.1/24`,
+  so ssh over the cable works at ~1 ms even with no Wi-Fi; after each
+  re-enumeration the host address has to be re-added (NetworkManager drops it).
+
+Still missing for a *real* suspend: a self-wake. `rtc0` has no `wakealarm`
+(the PMIC alarm IRQ is not wired, `rtc-pm8xxx` clears `RTC_FEATURE_ALARM`), so
+the only wake source in the list is `pwrkey` (now `wakeup-source`) and
+`pm7250b-usb` (VBUS). The next test is a real s2idle suspend ended by one press
+of the power key; `tools/suspend-test.sh` still refuses to suspend without a
+verified alarm, so this one is driven by hand.
