@@ -1588,3 +1588,45 @@ type and PARTUUID, then a new entry for the freed tail):
 
 Either way the Droidian data is unique (no backup exists), so it should be
 copied and verified before anything is deleted or shrunk.
+
+### Luma OS nightly is installed on the phone (2026-11-16)
+
+Layout now, after the owner chose "Luma in a new partition, Droidian untouched":
+
+| # | partition | sectors (4096) | size | fs | content |
+|---|---|---|---|---|---|
+| 34 | `userdata` | 2,883,584..20,447,231 | **67.0 GiB** (was 87) | ext4 | Droidian, intact: `rootfs.img` 32 G + `local/` 17 G verified after the shrink |
+| 35 | `darwin` | 25,701,120..30,944,250 | 20.0 GiB | APFS | HakiOS XNU port, untouched |
+| 36 | **`linux`** | 20,447,232..25,701,119 | 20.0 GiB | ext4 -> Luma disk image | **Luma OS nightly 20261114.2** |
+
+Steps, all verified:
+
+1. `e2fsck -f` + `resize2fs` on userdata to 67 GiB (data kept), then GPT:
+   entry 34 recreated with the same name/type covering the smaller range, entry 36
+   `linux` (type 8300) filling the freed gap before `darwin`. GPT backed up to
+   `/mnt/ufs-logs/sda-gpt-before-backup.bin` first. Note: userdata's **PARTUUID**
+   changed (`32684d05…` -> `c4790697…`); the filesystem UUID is unchanged and both
+   Android and Droidian reference the filesystem, not the partition GUID.
+2. `mkfs.ext4 -L linux /dev/disk/by-partlabel/linux`.
+3. Downloaded `luma-nightly-20261114.2-aarch64-disk.sparse` (9,370,839,372 B,
+   SHA-256 `d3dd2eeb…fe00b`, matches `latest.json`), `simg2img` to 12 GiB raw,
+   streamed into the partition over USB (`cat image | ssh dd of=… bs=4M conv=fsync`).
+4. Verified the result with `losetup -b 4096` (the image's GPT uses 4096-byte
+   sectors, so a plain 512-byte loop shows nothing):
+
+```
+Disk /dev/loop0: 5253888 sectors, 20.0 GiB
+ 1   256..123135    480.0 MiB  EF00  LumaBoot
+ 2   123136..3145471 11.5 GiB  8300  LumaRoot
+/dev/loop1 12G 8.9G used, mounted read-only
+/ostree/deploy/luma/deploy/cf402159dadca020740f5a8bcf7f50928efbe24bbd2ee1441a2f7438b6419697.0
+/boot/loader/entries/ostree-1.conf
+```
+
+The deployment commit equals the nightly commit from `latest.json`, so the image
+is complete and consistent.
+
+Remaining for a Luma boot: a boot image whose initramfs finds LumaRoot **inside**
+the `linux` partition (nested GPT: `losetup -b 4096 -o 504365056`, or scan the
+image), resolves that ostree deployment, and switches root - then our UEFI chain
+can RAM-boot it.
