@@ -286,6 +286,12 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bluetooth delta to export)"
 	fi
+	local pt="picasso/0011-input-picasso-nvt-sram-firmware.patch"
+	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-spi.c
+	git -C "$WS" diff HEAD -- drivers/input/touchscreen/picasso-nvt-spi.c \
+		drivers/input/touchscreen/Kconfig drivers/input/touchscreen/Makefile > "$PATCHES/$pt"
+	grep -qxF "$pt" "$PATCHES/series" || echo "$pt" >> "$PATCHES/series"
+
 	# A patch that exists but is not in the series is applied locally and
 	# silently dropped from every clean build: refuse to leave it that way.
 	for p in "$PATCHES"/picasso/*.patch; do

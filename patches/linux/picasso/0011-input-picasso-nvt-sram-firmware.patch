@@ -1,0 +1,543 @@
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index e326684b1..d4cee112e 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -704,6 +704,19 @@ config TOUCHSCREEN_MTOUCH
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called mtouch.
+ 
++config TOUCHSCREEN_PICASSO_NVT
++	tristate "Novatek NT36672C SPI touchscreen (Xiaomi Redmi K30 5G)"
++	depends on SPI
++	depends on ARCH_QCOM || COMPILE_TEST
++	help
++	  Say Y here if you have the Novatek NT36672C touch controller found on
++	  the Xiaomi Redmi K30 5G (picasso, SM7250), wired to a Qualcomm GENI
++	  SPI serial engine.  The controller runs its own firmware; this driver
++	  resets it, reads its id and polls the touch report buffer.
++
++	  To compile this driver as a module, choose M here: the module will be
++	  called picasso-nvt-spi.
++
+ config TOUCHSCREEN_NOVATEK_NVT_TS
+ 	tristate "Novatek NT11205 touchscreen support"
+ 	depends on I2C
+diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
+index ef029f232..f0db79ff6 100644
+--- a/drivers/input/touchscreen/Makefile
++++ b/drivers/input/touchscreen/Makefile
+@@ -120,3 +120,4 @@ obj-$(CONFIG_TOUCHSCREEN_IQS5XX)	+= iqs5xx.o
+ obj-$(CONFIG_TOUCHSCREEN_IQS7211)	+= iqs7211.o
+ obj-$(CONFIG_TOUCHSCREEN_ZINITIX)	+= zinitix.o
+ obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX83112B)	+= himax_hx83112b.o
++obj-$(CONFIG_TOUCHSCREEN_PICASSO_NVT)	+= picasso-nvt-spi.o
+diff --git a/drivers/input/touchscreen/picasso-nvt-spi.c b/drivers/input/touchscreen/picasso-nvt-spi.c
+new file mode 100644
+index 000000000..a70527a4b
+--- /dev/null
++++ b/drivers/input/touchscreen/picasso-nvt-spi.c
+@@ -0,0 +1,504 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Novatek NT36672C touchscreen on the Xiaomi Redmi K30 5G (picasso, SM7250).
++ *
++ * The panel's touch controller sits on GENI SPI SE7 (0x984000) as an SPI
++ * slave and speaks Novatek's register protocol, which the vendor driver
++ * (nt36672c/nt36xxx.c, downstream 4.19) documents:
++ *
++ *   set page   write 3 bytes: 0xff, (addr >> 15) & 0xff, (addr >> 7) & 0xff
++ *   write      1 command byte with bit 7 set, then the data bytes
++ *   read       the command byte has bit 7 masked off, the transfer is one
++ *              byte longer than the data, and the data comes back from the
++ *              third received byte on
++ *
++ * The controller requires host-downloaded SRAM firmware. This driver
++ * loads it, checks reset state, and polls the touch report buffer: no
++ * persistent firmware update, no MP test, no gesture.  The reset and the SPI pads are
++ * muxed early by drivers/soc/qcom/picasso-pinmux.c, because the TLMM tiles
++ * these pins live in are not mapped by the mainline pinctrl driver on this
++ * port yet.
++ *
++ * Report layout (10 slots of 6 bytes after the first byte):
++ *   byte 0        status: bits 2:0 = 1 down, 2 move, 3 up; bits 7:3 = slot id
++ *   bytes 1, 2    x and y, high 8 bits
++ *   byte 3        low nibbles: bits 7:4 = x, bits 3:0 = y
++ *   bytes 4, 5    pressure / area, unused here
++ */
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/property.h>
++#include <linux/unaligned.h>
++#include <linux/input.h>
++#include <linux/input/mt.h>
++#include <linux/input/touchscreen.h>
++#include <linux/module.h>
++#include <linux/spi/spi.h>
++#include <linux/workqueue.h>
++
++#define NVT_MAX_FINGERS		10
++#define NVT_REPORT_LEN		(1 + 6 * NVT_MAX_FINGERS)
++#define NVT_POLL_MS		8
++
++/* Bring-up switch: skip the controller reset entirely. The bootloader leaves
++ * the chip running its own firmware; if resetting it only lands it in the
++ * bootloader (fw reset state never reaches 0xa0), the reset is the problem, not
++ * the reporting path. Set with picasso_nvt_spi.no_reset=1 on the kernel cmdline. */
++static char *firmware_name = "novatek/novatek_nt36672c_g7a_fw01.bin";
++module_param(firmware_name, charp, 0444);
++MODULE_PARM_DESC(firmware_name, "SRAM firmware file (DT firmware-name overrides default)");
++static bool no_reset;
++module_param(no_reset, bool, 0444);
++MODULE_PARM_DESC(no_reset, "do not reset the controller at probe");
++
++#define NVT_PAGE_CMD		0xff
++#define NVT_READ_MASK		0x7f
++#define NVT_WRITE_MASK		0x80
++
++/* chip id lives at 0x1f64e; the page command addresses 23-bit space */
++#define NVT_ID_ADDR		0x1f64e
++/* The SPI variant of the vendor driver resets through SWRST_N8, not through
++ * the I2C engine-reset register: DT novatek,swrst-n8-addr = <0x03f0fe> for the
++ * NT36672A map, 0x69 boots the fw, 0xaa idles the MCU. */
++#define NVT_SWRST_N8_ADDR	0x03f0fe
++#define NVT_SWRST_N8_BOOT	0x69
++#define NVT_SWRST_N8_IDLE	0xaa
++#define NVT_SPI_RD_FAST_ADDR	0x03f310
++
++/* event-map offsets, from nt36xxx.h of the vendor driver */
++#define NVT_MAP_RESET_COMPLETE	0x60	/* 0xa0..0xaf once the fw is running */
++#define NVT_MAP_FWINFO		0x78	/* fw_ver, ~fw_ver, x_num, y_num, ... */
++#define NVT_RESET_STATE_INIT	0xa0
++#define NVT_RESET_STATE_MAX	0xaf
++
++/* event buffer base per chip variant, from the vendor trim id table */
++#define NVT_EVENT_BUF_36675	0x22d00		/* id .. 72 66 03 / 75 66 03 */
++#define NVT_EVENT_BUF_36672A	0x11a00		/* id .. 70 66 03 and friends */
++#define NVT_EVENT_BUF_DEFAULT	0x11a00
++
++struct nvt_ts {
++	struct spi_device *spi;
++	struct input_dev *input;
++	struct delayed_work poll;
++	u8 tx[NVT_REPORT_LEN + 8];
++	u8 rx[NVT_REPORT_LEN + 8];
++	u32 event_buf;
++	bool have_event_buf;
++	u8 last_slot_state[NVT_MAX_FINGERS];
++	int last_nz;
++	u8 best_report[NVT_REPORT_LEN];
++};
++
++static int nvt_write_reg(struct nvt_ts *ts, const u8 *buf, size_t len)
++{
++	u8 *tx = ts->tx;
++	int ret;
++
++	if (len > sizeof(ts->tx))
++		return -EINVAL;
++	memcpy(tx, buf, len);
++	tx[0] |= NVT_WRITE_MASK;
++	ret = spi_write(ts->spi, tx, len);
++	return ret;
++}
++
++static int nvt_set_page(struct nvt_ts *ts, u32 addr)
++{
++	u8 buf[3] = {
++		NVT_PAGE_CMD,
++		(addr >> 15) & 0xff,
++		(addr >> 7) & 0xff,
++	};
++
++	return nvt_write_reg(ts, buf, sizeof(buf));
++}
++
++static int nvt_read(struct nvt_ts *ts, u8 offset, u8 *dst, size_t len)
++{
++	struct spi_transfer t = {
++		.tx_buf = ts->tx,
++		.rx_buf = ts->rx,
++		.len = len + 1 + 1,	/* command + one turnaround byte */
++	};
++	int ret;
++
++	if (len + 2 > sizeof(ts->tx))
++		return -EINVAL;
++	memset(ts->tx, 0, len + 2);
++	memset(ts->rx, 0, len + 2);
++	ts->tx[0] = offset & NVT_READ_MASK;
++	ret = spi_sync_transfer(ts->spi, &t, 1);
++	if (ret)
++		return ret;
++	memcpy(dst, ts->rx + 2, len);
++	return 0;
++}
++
++static int nvt_write_addr(struct nvt_ts *ts, u32 addr, u8 val)
++{
++	u8 buf[2] = { addr & 0x7f, val };
++	int ret;
++
++	ret = nvt_set_page(ts, addr);
++	if (ret)
++		return ret;
++	return nvt_write_reg(ts, buf, sizeof(buf));
++}
++
++static int nvt_read_mapped(struct nvt_ts *ts, u32 addr, u8 *dst, size_t len)
++{
++	int ret;
++
++	ret = nvt_set_page(ts, addr);
++	if (ret)
++		return ret;
++	return nvt_read(ts, addr & 0x7f, dst, len);
++}
++
++/* Host-download flow from downstream nt36672c/nt36xxx_fw_update.c.
++ * NT36675 hw_crc=2; these writes target controller SRAM, never UFS/flash.
++ */
++static int nvt_write_bytes(struct nvt_ts *ts, u32 addr, const u8 *data, size_t len)
++{
++	u8 buf[65];
++	int ret;
++
++	while (len) {
++		size_t n = min_t(size_t, len, min_t(size_t, 64, 128 - (addr & 127)));
++
++		ret = nvt_set_page(ts, addr);
++		if (ret)
++			return ret;
++		buf[0] = addr & 127;
++		memcpy(buf + 1, data, n);
++		ret = nvt_write_reg(ts, buf, n + 1);
++		if (ret)
++			return ret;
++		addr += n;
++		data += n;
++		len -= n;
++	}
++	return 0;
++}
++
++static int nvt_upload(struct nvt_ts *ts)
++{
++	const struct firmware *fw;
++	const char *name = firmware_name;
++	u32 hdr, count, overlay, dlm, i, end;
++	u8 value;
++	int ret;
++
++	device_property_read_string(&ts->spi->dev, "firmware-name", &name);
++	ret = request_firmware(&fw, name, &ts->spi->dev);
++	if (ret)
++		return dev_err_probe(&ts->spi->dev, ret, "request firmware %s\n", name);
++	ret = -EINVAL;
++	if (fw->size < 0x30)
++		goto out;
++	for (end = fw->size / 4096 * 4096; end >= 4096; end -= 4096)
++		if (!memcmp(fw->data + end - 3, "NVT", 3))
++			break;
++	if (!end || (u8)(fw->data[end - 4096] + fw->data[end - 4096 + 1]) != 255)
++		goto out;
++	dev_info(&ts->spi->dev, "firmware %s size=%zu end flag NVT at %#x\n", name, fw->size, end - 3);
++	hdr = get_unaligned_le32(fw->data);
++	dlm = get_unaligned_le32(fw->data + 12);
++	if (hdr < 0x30 || hdr > fw->size || (hdr - 0x30) % 16)
++		goto out;
++	count = 2 + (hdr - 0x30) / 16;
++	overlay = fw->data[0x28] & 0x10 ? fw->data[0x28] & 15 : 0;
++	/* Validate all partitions before resetting or writing the controller. */
++	for (i = 0; i < count + overlay; i++) {
++		u32 pos = i < 2 ? i * 12 : i < count ? 0x30 + (i - 2) * 16 : dlm + (i - count) * 16;
++		u32 bin, len, addr;
++
++		if (pos > fw->size - 16)
++			goto out;
++		bin = get_unaligned_le32(fw->data + pos + (i < 2 ? 0 : 8));
++		addr = get_unaligned_le32(fw->data + pos + (i < 2 ? 4 : 0));
++		len = get_unaligned_le32(fw->data + pos + (i < 2 ? 8 : 4));
++		if (len && (bin >= fw->size || len >= fw->size - bin || addr > 0x7fffff || len > 0x7fffff - addr))
++			goto out;
++	}
++	ret = nvt_write_addr(ts, NVT_SWRST_N8_ADDR, NVT_SWRST_N8_BOOT);
++	if (ret)
++		goto out;
++	msleep(5);
++	ret = nvt_write_addr(ts, NVT_SPI_RD_FAST_ADDR, 0);
++	if (ret)
++		goto out;
++	for (i = 0; i < count + overlay; i++) {
++		u32 pos = i < 2 ? i * 12 : i < count ? 0x30 + (i - 2) * 16 : dlm + (i - count) * 16;
++		u32 bin = get_unaligned_le32(fw->data + pos + (i < 2 ? 0 : 8));
++		u32 addr = get_unaligned_le32(fw->data + pos + (i < 2 ? 4 : 0));
++		u32 len = get_unaligned_le32(fw->data + pos + (i < 2 ? 8 : 4));
++
++		if (!len)
++			continue;
++		ret = nvt_write_bytes(ts, addr, fw->data + bin, len + 1);
++		if (ret)
++			goto out;
++		dev_info(&ts->spi->dev, "SRAM partition %u addr=%#x bytes=%u\n", i, addr, len + 1);
++		if (i < 2) {
++			u8 bank[4];
++			put_unaligned_le32(addr, bank);
++			ret = nvt_write_bytes(ts, i ? 0x3f12c : 0x3f128, bank, 3);
++			if (ret) goto out;
++			put_unaligned_le32(len, bank);
++			ret = nvt_write_bytes(ts, i ? 0x3f130 : 0x3f118, bank, 3);
++			if (ret) goto out;
++			memcpy(bank, fw->data + 0x18 + i * 4, 4);
++			ret = nvt_write_bytes(ts, 0x3f100 + i * 4, bank, 4);
++			if (ret) goto out;
++			dev_info(&ts->spi->dev, "partition %u golden CRC=%#x\n", i, get_unaligned_le32(bank));
++		}
++	}
++	ret = nvt_read_mapped(ts, 0x3f30e, &value, 1);
++	if (ret) goto out;
++	ret = nvt_write_addr(ts, 0x3f30e, value | 0x80);
++	if (ret) goto out;
++	ret = nvt_write_addr(ts, ts->event_buf + 0x60, 0);
++	if (ret) goto out;
++	ret = nvt_write_addr(ts, ts->event_buf + 0x50, 0xae);
++	if (ret) goto out;
++	ret = nvt_write_addr(ts, 0x3f10d, 1);
++	msleep(5);
++	dev_info(&ts->spi->dev, "SRAM upload CRC enabled BOOT_RDY ret=%d\n", ret);
++ out:
++	release_firmware(fw);
++	return ret;
++}
++
++static int nvt_read_id(struct nvt_ts *ts, u8 *id, size_t len)
++{
++	int ret;
++
++	ret = nvt_set_page(ts, NVT_ID_ADDR);
++	if (ret)
++		return ret;
++	return nvt_read(ts, NVT_ID_ADDR & 0x7f, id, len);
++}
++
++static void nvt_report(struct nvt_ts *ts, const u8 *report)
++{
++	struct input_dev *input = ts->input;
++	bool touch = false;
++	int i;
++
++	for (i = 0; i < NVT_MAX_FINGERS; i++) {
++		const u8 *p = report + 6 * i;
++		unsigned int status = p[0] & 0x07;
++		unsigned int slot = p[0] >> 3;
++		unsigned int x, y;
++
++		if (status != 1 && status != 2)
++			continue;
++		if (slot == 0 || slot > NVT_MAX_FINGERS)
++			continue;
++		x = (p[1] << 4) | (p[3] >> 4);
++		y = (p[2] << 4) | (p[3] & 0x0f);
++		if (x >= 1080 || y >= 2400)
++			continue;
++		input_mt_slot(input, slot - 1);
++		input_mt_report_slot_state(input, MT_TOOL_FINGER, true);
++		input_report_abs(input, ABS_MT_POSITION_X, x);
++		input_report_abs(input, ABS_MT_POSITION_Y, y);
++		touch = true;
++	}
++	input_mt_sync_frame(input);
++	input_report_key(input, BTN_TOUCH, touch);
++	input_sync(input);
++}
++
++static void nvt_poll_work(struct work_struct *work)
++{
++	struct nvt_ts *ts = container_of(work, struct nvt_ts, poll.work);
++	u8 report[NVT_REPORT_LEN];
++
++	if (!nvt_read_mapped(ts, ts->event_buf, report, sizeof(report)))
++		nvt_report(ts, report);
++	schedule_delayed_work(&ts->poll, msecs_to_jiffies(NVT_POLL_MS));
++}
++
++static int nvt_probe(struct spi_device *spi)
++{
++	struct nvt_ts *ts;
++	struct input_dev *input;
++	u8 id[6] = {0};
++	int ret;
++
++	ts = devm_kzalloc(&spi->dev, sizeof(*ts), GFP_KERNEL);
++	if (!ts)
++		return -ENOMEM;
++	ts->spi = spi;
++	spi_set_drvdata(spi, ts);
++
++	spi->bits_per_word = 8;
++	spi->mode = SPI_MODE_0;
++	ret = spi_setup(spi);
++	if (ret)
++		return dev_err_probe(&spi->dev, ret, "spi_setup\n");
++
++	/* Vendor nvt_bootloader_reset() is a raw two-byte write of {0x00, 0x5a}
++	 * to the controller's hardware address, not a page-mapped register write;
++	 * the page form left the chip answering reads in state 0xb9 and never
++	 * running its firmware (fw reset state 0xb9 after 101 polls). */
++	if (!no_reset) {
++		/* vendor nvt_bootloader_reset(): SWRST_N8 <- 0x69, then
++		 * nvt_write_addr(SPI_RD_FAST_ADDR, 0x00) */
++		ret = nvt_write_addr(ts, NVT_SWRST_N8_ADDR, NVT_SWRST_N8_BOOT);
++		if (ret)
++			return dev_err_probe(&spi->dev, ret, "swrst-n8 boot write\n");
++		mdelay(5);
++	} else {
++		dev_info(&spi->dev, "reset skipped (no_reset=1)\n");
++	}
++
++	/* the normal register read path, not the "read fast" one */
++	ret = nvt_write_addr(ts, NVT_SPI_RD_FAST_ADDR, 0x00);
++	if (ret)
++		dev_warn(&spi->dev, "read-fast disable failed: %d\n", ret);
++
++	/* the controller boots its own firmware; ask it who it is */
++	ret = nvt_read_id(ts, id, sizeof(id));
++	if (ret) {
++		dev_err(&spi->dev, "chip id read failed: %d\n", ret);
++		return ret;
++	}
++	dev_info(&spi->dev, "NT36672C id %*ph\n", (int)sizeof(id), id);
++
++	/* vendor trim id table: {0x0c,..,0x72,0x66,0x03} and {..,0x75,0x66,0x03}
++	 * are the NT36675 map, everything else we know uses the NT36672A map */
++	if (id[3] == 0x72 && id[4] == 0x66 && id[5] == 0x03 && id[0] == 0x0c)
++		ts->event_buf = NVT_EVENT_BUF_36675;
++	else if (id[4] == 0x66 && id[5] == 0x03)
++		ts->event_buf = NVT_EVENT_BUF_36672A;
++	else
++		ts->event_buf = NVT_EVENT_BUF_DEFAULT;
++	ts->have_event_buf = true;
++	if (ts->event_buf != NVT_EVENT_BUF_36675)
++		return -ENODEV;
++	ret = nvt_upload(ts);
++	if (ret)
++		return dev_err_probe(&spi->dev, ret, "SRAM firmware upload failed\n");
++
++	/* The vendor's probe does the same three steps here; skipping them is
++	 * what left the controller answering register reads but never scanning
++	 * (no report ever reached the input device):
++	 *   nvt_check_fw_reset_state(RESET_STATE_INIT)  then  nvt_get_fw_info()
++	 */
++	{
++		u8 st = 0;
++		int i, ready = 0;
++
++		for (i = 0; i < 100; i++) {
++			mdelay(10);
++			if (nvt_read_mapped(ts, ts->event_buf | NVT_MAP_RESET_COMPLETE,
++					    &st, 1))
++				continue;
++			if (st >= NVT_RESET_STATE_INIT && st <= NVT_RESET_STATE_MAX) {
++				ready = 1;
++				break;
++			}
++		}
++		dev_info(&spi->dev, "fw reset state 0x%02x after %d polls (%s)\n",
++			 st, i + 1, ready ? "fw running" : "NOT running");
++		if (!ready) {
++			u8 raw = 0;
++
++			if (!nvt_read_mapped(ts, NVT_SWRST_N8_ADDR, &raw, 1))
++				dev_info(&spi->dev, "swrst-n8 reads 0x%02x\n", raw);
++		}
++
++		{
++			u8 crc[9] = {0};
++			int err = nvt_read_mapped(ts, 0x3f133, crc, 1);
++
++			dev_info(&spi->dev, "boot CRC flags=%#x read=%d\n", crc[0], err);
++			if (!nvt_read_mapped(ts, 0x3f120, crc, 8))
++				dev_info(&spi->dev, "boot CRC result ILM=%#x DLM=%#x\n",
++					 get_unaligned_le32(crc), get_unaligned_le32(crc + 4));
++		}
++		if (!ready)
++			return -ETIMEDOUT;
++
++		if (ready) {
++			u8 info[17] = {0};
++
++			if (nvt_read_mapped(ts, ts->event_buf | NVT_MAP_FWINFO,
++					    info, sizeof(info)) == 0) {
++				u16 xmax = (info[5] << 8) | info[6];
++				u16 ymax = (info[7] << 8) | info[8];
++
++				dev_info(&spi->dev,
++					 "fw info: ver 0x%02x (~0x%02x) x_num %u y_num %u abs %ux%u\n",
++					 info[1], info[2], info[3], info[4], xmax, ymax);
++				if ((u8)(info[1] + info[2]) != 0xff)
++					dev_warn(&spi->dev, "fw info is broken\n");
++			} else {
++				dev_warn(&spi->dev, "fw info read failed\n");
++			}
++		}
++	}
++
++	input = devm_input_allocate_device(&spi->dev);
++	if (!input)
++		return -ENOMEM;
++	ts->input = input;
++	input->name = "Novatek NT36672C Touchscreen";
++	input->id.bustype = BUS_SPI;
++
++	input_set_abs_params(input, ABS_MT_POSITION_X, 0, 1079, 0, 0);
++	input_set_abs_params(input, ABS_MT_POSITION_Y, 0, 2399, 0, 0);
++	input_set_abs_params(input, ABS_MT_PRESSURE, 0, 0xff, 0, 0);
++	input_set_abs_params(input, ABS_MT_TOUCH_MAJOR, 0, 0xff, 0, 0);
++	input_set_capability(input, EV_KEY, BTN_TOUCH);
++	ret = input_mt_init_slots(input, NVT_MAX_FINGERS,
++				  INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
++	if (ret)
++		return dev_err_probe(&spi->dev, ret, "input_mt_init_slots\n");
++	ret = input_register_device(input);
++	if (ret)
++		return dev_err_probe(&spi->dev, ret, "input_register_device\n");
++
++	INIT_DELAYED_WORK(&ts->poll, nvt_poll_work);
++	schedule_delayed_work(&ts->poll, msecs_to_jiffies(200));
++
++	dev_info(&spi->dev, "ready, event buffer %#x, polling every %d ms\n",
++		 ts->event_buf, NVT_POLL_MS);
++	return 0;
++}
++
++static void nvt_remove(struct spi_device *spi)
++{
++	struct nvt_ts *ts = spi_get_drvdata(spi);
++
++	cancel_delayed_work_sync(&ts->poll);
++}
++
++static const struct spi_device_id nvt_id[] = {
++	{ "picasso-nvt-ts-spi", 0 },
++	{ }
++};
++MODULE_DEVICE_TABLE(spi, nvt_id);
++
++static const struct of_device_id nvt_of_match[] = {
++	{ .compatible = "xiaomi,picasso-nvt-ts-spi" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, nvt_of_match);
++
++static struct spi_driver nvt_driver = {
++	.driver = {
++		.name = "picasso-nvt-ts",
++		.of_match_table = nvt_of_match,
++	},
++	.id_table = nvt_id,
++	.probe = nvt_probe,
++	.remove = nvt_remove,
++};
++module_spi_driver(nvt_driver);
++
++MODULE_DESCRIPTION("Novatek NT36672C SPI touchscreen (Xiaomi Redmi K30 5G)");
++MODULE_LICENSE("GPL");

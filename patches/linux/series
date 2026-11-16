@@ -25,3 +25,4 @@ picasso/0007-picasso-bringup-pinmux-audio-gpu.patch
 picasso/0008-bluetooth-hci-qca-wcn3991-flow-control.patch
 picasso/0009-drm-msm-a6xx-fix-opp-use-after-free.patch
 picasso/0010-drm-msm-a6xx-fix-rpmh-dependency-votes.patch
+picasso/0011-input-picasso-nvt-sram-firmware.patch

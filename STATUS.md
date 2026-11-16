@@ -1133,3 +1133,62 @@ available to userspace. **Capacity is not**: it needs the QBG gauge
 (`pm7250b_qg`, vendor `qpnp,qg`), for which mainline has no driver; the
 ADSP-mediated `qcom_battmgr` is not an option while the ADSP restarts every
 41 s (see the sensor PD note above).
+
+### Touch SRAM host-download port (2026-11-16, offline)
+
+Read the downstream SPI `nt36672c/nt36xxx_fw_update.c`: this variant downloads
+SRAM partitions, not flash pages. `NVT` is a sector-end marker in the input
+file; hardware CRC checks ILM/DLM after download, followed by BOOT_RDY and
+RESET_STATE_INIT. Added that flow, bounds checking, firmware-name DT/module
+selection (default `novatek/novatek_nt36672c_g7a_fw01.bin`), and checked SPI
+errors. Polling now uses the trim-ID-selected event buffer and zero-based
+report data; release frames are no longer suppressed by the heuristic score.
+
+The MIUI bn vendor image was reconstructed read-only with Brotli + sdat2img;
+its firmware directory contains no Novatek binaries. Instead decoded the
+existing downstream `firmware/novatek_nt36672c_g7a_fw0{1,2,3}.bin.ihex` with
+objcopy into temporary `nvt-fw/` files outside the repository. fw01 SHA256:
+`a428d4f87b90d6990396975c82773078fc43fde40a981507b63998513fe27912`.
+No blob is committed. For a RAM image, install the chosen decoded binary into
+its root tree's `lib/firmware/novatek/` before `tools/pack-rootfs.sh`; the filename
+must match the driver parameter or DT `firmware-name`. This is a host extraction
+step, not runtime vendor mounting. Panel lockdown/OTP is still unknown.
+
+Kernel build completed successfully for the first upload implementation.
+Hardware upload and touch verdict are pending: the coordinator holds the phone
+lock for suspend testing, so no RAM cycle has been performed for this change.
+There are no new firmware-running log lines or touch probe counts yet; the last
+measured result remains zero SYN_REPORT. Human tapping is required for verdict.
+
+### Suspend: s2idle enters, but with no wake source the phone sleeps until it is powered off
+
+First attempt (2026-11-16). `CONFIG_PM_SLEEP_DEBUG`, `CONFIG_PM_DEBUG` and
+`CONFIG_PM_ADVANCED_DEBUG` are now built in, and the phone reports:
+
+```
+/sys/power/state      = [freeze mem disk]
+/sys/power/mem_sleep  = [[s2idle]]     (no shallow/deep: PSCI offers s2idle only)
+```
+
+`echo mem > /sys/power/state` **did** suspend the SoC and nothing woke it:
+USB (CDC-ACM and fastboot) and Wi-Fi all disappeared, and a short press of the
+power key did not resume it — holding the key powered the phone off. Two causes,
+both actionable:
+
+1. **No wake source was armed.** An RTC alarm was never set, so there was
+   nothing to wake the SoC. `tools/suspend-test.sh` now arms the alarm with
+   `rtcwake -m no -s N`, **reads `/sys/class/rtc/rtc0/wakealarm` back**, and
+   refuses to suspend if it is empty; it then suspends with
+   `rtcwake -m mem -s N`, so the phone always comes back by itself. `--dry-run`
+   arms/verifies/disarms without suspending.
+2. **The power key was not a wakeup source.** `pm8941-pwrkey` only registers as
+   one when the DT node says so (`wakeup-source`), which the picasso board did
+   not; the board now sets it. The RTC driver already does
+   `devm_device_init_wakeup()` + `devm_pm_set_wake_irq(alarm)` unconditionally,
+   so the alarm path is fine.
+
+`/sys/power/pm_test` was not present in that boot even though
+`CONFIG_PM_SLEEP_DEBUG=y` is in `.config` (the attribute is created inside
+`#ifdef CONFIG_PM_SLEEP_DEBUG`, `kernel/power/main.c:384`) — to re-check on the
+next boot; until it appears, the ladder cannot be driven and only whole-system
+s2idle can be tested (with an armed alarm).
