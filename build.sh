@@ -164,7 +164,13 @@ build_bootimg() {
 	[ -f "$fd" ] || die "set UEFI_FD=/path/to/SILICIUM_UEFI.fd"
 	[ -f "$shim" ] || die "set BOOTSHIM=/path/to/BootShim.bin"
 	[ -f "$udtb" ] || die "set UEFI_DTB=/path/to/picasso.dtb"
-	[ -n "${CMDLINE:-}" ] && extra=(--cmdline "$CMDLINE")
+	# A payload without an explicit command line silently inherits the DTB's
+	# /chosen/bootargs, which once produced a kernel with no rdinit and panic=0
+	# (it panicked "unable to mount root fs" and stayed dead). Always pass one.
+	: "${CMDLINE:=console=tty0 loglevel=7 picasso_pinmux.mode=write \
+rdinit=/usr/lib/systemd/systemd systemd.show_status=1 \
+clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10}"
+	extra=(--cmdline "$CMDLINE")
 	# PAYLOAD_NO_INITRD=1: no initrd in the container; Linux boots the resident
 	# image sent with "fastboot oem ramdisk" (the loader patches /chosen)
 	[ -n "${PAYLOAD_NO_INITRD:-}" ] || initrd_arg=(--initrd "$OUT/initrd.cpio.gz")

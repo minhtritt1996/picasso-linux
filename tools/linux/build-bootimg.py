@@ -106,7 +106,8 @@ def main():
     ap.add_argument('--uefi-fd', required=True, help='SILICIUM_UEFI.fd')
     ap.add_argument('--bootshim', required=True, help='BootShim.bin')
     ap.add_argument('--uefi-dtb', required=True, help='device tree for the UEFI build')
-    ap.add_argument('--cmdline', default='', help='override /chosen/bootargs')
+    ap.add_argument('--cmdline', required=True,
+                    help='kernel command line written to /chosen/bootargs')
     ap.add_argument('--uefi-ramdisk', default='', help='ramdisk for the outer boot header (default: 5 zero bytes)')
     ap.add_argument('--payload-out', default='', help='also write the XNUP container here (for fastboot stage)')
     ap.add_argument('--no-usb', action='store_true',
@@ -184,6 +185,12 @@ def main():
             '-o', args.output,
         ], check=True)
 
+    if 'panic=0' in args.cmdline:
+        die('the command line has panic=0: a panic would leave the phone dead, not reboot into the loader')
+    if 'rdinit=' not in args.cmdline and 'init=' not in args.cmdline:
+        die("the command line names no rdinit=/init=: the kernel would find no /init "
+            "and panic 'unable to mount root fs'")
+    print(f'  cmdline: {args.cmdline}')
     total = os.path.getsize(args.output)
     print(f'{args.output}: {total} bytes')
     print(f'  payload {len(payload)} / {PAYLOAD_MAX - PAYLOAD_RESERVED} bytes (XNUP at 0x{PAYLOAD_BASE:x})')
