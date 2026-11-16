@@ -7,6 +7,9 @@ Wants=usbacm.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/sbin/ip link set usb0 up
+# Static IPv4 beside the automatic link-local: the host side uses 192.168.7.1,
+# which keeps ssh working over the cable when Wi-Fi did not come up.
+ExecStart=/sbin/ip addr replace 192.168.7.2/24 dev usb0
 
 [Install]
 WantedBy=multi-user.target

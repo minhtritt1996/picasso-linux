@@ -13,7 +13,9 @@ TTYPath=/dev/ttyGS0
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=no
-Restart=on-failure
+# A suspend of the USB controller hangs the tty up and bash exits 0, so
+# on-failure leaves the phone with no console at all. Always come back.
+Restart=always
 RestartSec=1
 
 [Install]

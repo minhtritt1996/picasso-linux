@@ -1235,3 +1235,25 @@ BOOT_RDY/reset-state check up to three times and decodes CRC status bits
 The length transfer already carried three data bytes plus the command; its
 third byte is now masked to bit 16 exactly like downstream `hw_crc > 1`.
 No payload rebuild or phone access was performed for this follow-up.
+
+### The phone survived every pm_test level — what died was the console
+
+After the ladder the phone was still running (its panel showed the console, the
+composite gadget stayed enumerated), but neither the USB shell nor Wi-Fi
+answered, so it looked dead. Root cause: at the `devices` level the USB
+controller suspends, the tty hangs up, `bash` on `/dev/ttyGS0` exits with
+status 0, and `ttygs-shell.service` had `Restart=on-failure`, which does not
+restart on a clean exit. Nothing respawns the console afterwards.
+
+Fixed in the rootfs (and repacked, sha256 `2cd4790c…`):
+
+- `ttygs-shell.service`: `Restart=always` — the console comes back by itself
+  after a suspend/hangup.
+- `usb0-up.service`: besides `ip link set usb0 up`, it assigns a static
+  `192.168.7.2/24`; with `192.168.7.1/24` on the host side, ssh over the cable
+  works even when wlan0 never associates. That is the channel that should have
+  been used while Wi-Fi was flapping.
+
+So the pm_test result stands and is better than it looked: the SoC resumes from
+`freezer`, `devices`, `platform`, `processors` and `core` — the kernel does not
+hang in suspend — and only the observation channel was lost.
