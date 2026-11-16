@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..8bc2450d4
+index 000000000..806f17c17
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,582 @@
+@@ -0,0 +1,707 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -501,13 +501,59 @@ index 000000000..8bc2450d4
 +	status = "okay";
 +};
 +
-+/* Bluetooth: uart5 (SE5) stays disabled until the geni-uart hang is fixed */
 +&qupv3_id_0 {
 +	status = "okay";
 +};
 +
++/* geni-serial needs a line number, otherwise it fails with "Invalid line -19" */
++/ {
++	aliases {
++		serial1 = &uart5;
++	};
++};
++
++/*
++ * Bluetooth: WCN3990 on GENI UART SE5 (0x894000). The pads (gpio38-41, qup05)
++ * are muxed by picasso-pinmux.c with the vendor's bias per pin; the firmware
++ * (qca/crbtfw32.tlv + qca/crnv32.bin) comes from the phone's "bluetooth"
++ * partition, linked into /lib/firmware/qca by fw-mount.sh.
++ *
++ * Only the SE interrupt is wired: the RX wake interrupt on gpio41 that the SoC
++ * dtsi adds makes the patch/NVM download time out (avicii hit the same thing
++ * and notes the RX wake IRQ must not be on that pad).
++ */
 +&uart5 {
-+	status = "disabled";
++	/delete-property/ interrupts-extended;
++	interrupts-extended = <&intc GIC_SPI 606 IRQ_TYPE_LEVEL_HIGH>;
++	status = "okay";
++
++	bluetooth {
++		/* the chip on picasso answers as a WCN3991 (SOC 0x40010320);
++		 * binding it as wcn3990 makes the version read time out */
++		compatible = "qcom,wcn3991-bt";
++
++		vddio-supply = <&vreg_s4a_1p8>;
++		vddxo-supply = <&vreg_l14a_1p8>;
++		vddrf-supply = <&vreg_l2c_1p3>;
++		vddch0-supply = <&vreg_l10c_3p3>;
++
++		max-speed = <3200000>;
++
++		/* status line from the chip (the vendor's qca,bt-sw-ctrl-gpio) */
++		swctrl-gpios = <&tlmm 73 GPIO_ACTIVE_HIGH>;
++
++		/* btqca sets HCI_QUIRK_USE_BDADDR_PROPERTY for wcn399x: without
++		 * this property the controller stays HCI_UNCONFIGURED, hci_init_sync
++		 * never runs and mgmt lists no index (btmgmt: "Index list with 0
++		 * items"). The real address is provisioned at the factory and lives
++		 * in the phone's persist partition; this locally administered one
++		 * is the bring-up placeholder until it is read from there. */
++		local-bd-address = [ 01 00 00 00 00 02 ];
++
++		/* order matters: [0] is the NVM, [1] the patch (rampatch); the
++		 * driver prefixes "qca/" itself */
++		firmware-name = "crnv32.bin", "crbtfw32.tlv";
++	};
 +};
 +
 +
@@ -536,7 +582,9 @@ index 000000000..8bc2450d4
 +		speaker_amp: audio-codec@34 {
 +			compatible = "nxp,tfa9874";
 +			reg = <0x34>;
-+			reset-gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
++			/* active high: the vendor driver idles it low and
++			 * pulses 1 -> 0 to reset the amp */
++			reset-gpios = <&tlmm 58 GPIO_ACTIVE_HIGH>;
 +			vddd-supply = <&vreg_s4a_1p8>;
 +			#sound-dai-cells = <0>;
 +		};
@@ -572,6 +620,20 @@ index 000000000..8bc2450d4
 +		codec {
 +			sound-dai = <&speaker_amp>;
 +		};
++	};
++};
++
++/*
++ * Secondary MI2S to the TFA9874: downstream feeds the amplifier from data
++ * line 1 (gpio74, sec_i2s_data1_active with output-high) and reads its sense
++ * output on line 0 (gpio72, input-enable), same wiring as avicii.
++ */
++&q6afedai {
++	dai@21 {
++		reg = <SECONDARY_MI2S_RX>;
++		/* vendor sec MI2S uses tx-lines = 2: the amp listens on
++		 * data line 1 (gpio74), line 0 (gpio72) is its sense output */
++		qcom,sd-lines = <2>;
 +	};
 +};
 +
@@ -612,5 +674,68 @@ index 000000000..8bc2450d4
 +		function = "sec_mi2s";
 +		drive-strength = <8>;
 +		bias-disable;
++	};
++};
++
++/*
++ * Buttons. None of the three is a TLMM pin: power is KPDPWR_N of the PM8150
++ * PON block, volume down is its RESIN_N, and volume up is PM8150L GPIO5 with
++ * a pull-up (the key shorts it to ground) — same arrangement as the vendor
++ * tree (lito-mic-overlay: key_vol_up_default) and the other Xiaomi boards.
++ */
++/ {
++	gpio-keys {
++		compatible = "gpio-keys";
++		pinctrl-names = "default";
++		pinctrl-0 = <&key_vol_up_default>;
++
++		key-vol-up {
++			label = "Volume Up";
++			gpios = <&pm8150l_gpios 5 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEUP>;
++			debounce-interval = <15>;
++			linux,can-disable;
++			wakeup-source;
++		};
++	};
++};
++
++&pm8150l_gpios {
++	key_vol_up_default: key-vol-up-state {
++		pins = "gpio5";
++		function = "normal";
++		input-enable;
++		bias-pull-up;
++		power-source = <0>;
++	};
++};
++
++&pon {
++	mode-bootloader = <0x2>;
++	mode-recovery = <0x1>;
++};
++
++&pon_pwrkey {
++	status = "okay";
++};
++
++&pon_resin {
++	linux,code = <KEY_VOLUMEDOWN>;
++	status = "okay";
++};
++
++/*
++ * Touch. The NT36672C hangs off GENI SPI SE7; its reset (tlmm 4) and interrupt
++ * (tlmm 5) pads are muxed early by picasso-pinmux.c, and the driver polls the
++ * report buffer because the interrupt pad lives in a TLMM tile the mainline
++ * pinctrl driver does not map on this port yet.
++ */
++&spi1 {
++	status = "okay";
++
++	touchscreen@0 {
++		compatible = "xiaomi,picasso-nvt-ts-spi";
++		reg = <0>;
++		spi-max-frequency = <5000000>;
 +	};
 +};

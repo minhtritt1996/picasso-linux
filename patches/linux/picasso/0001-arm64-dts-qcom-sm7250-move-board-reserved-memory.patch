@@ -153,7 +153,7 @@ index 0cdad894d..e1a85c818 100644
  		 * Downstream: 0xcbe00000 + 0x400000 including a 0x1000
  		 * OnePlus-only devinfo zone at the end. Mainline has no such
 diff --git a/arch/arm64/boot/dts/qcom/sm7250.dtsi b/arch/arm64/boot/dts/qcom/sm7250.dtsi
-index e2279ea4a..bb2af0fd6 100644
+index e2279ea4a..52635044b 100644
 --- a/arch/arm64/boot/dts/qcom/sm7250.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm7250.dtsi
 @@ -433,151 +433,6 @@ cluster_pd: power-domain-cpu-cluster0 {
@@ -308,3 +308,27 @@ index e2279ea4a..bb2af0fd6 100644
  	smp2p-adsp {
  		compatible = "qcom,smp2p";
  		qcom,smem = <443>, <429>;
+@@ -799,19 +654,14 @@ &qup_virt SLAVE_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS>,
+ 				status = "disabled";
+ 			};
+ 
+-			/* Downstream qupv3_se7_i2c (wrapper 1, SE1), gpio6/7: touchscreen */
+-			i2c1: i2c@984000 {
+-				compatible = "qcom,geni-i2c";
++			/* Downstream qupv3_se7_spi (wrapper 1, SE1): touchscreen.
++			 * The pads (gpio6/7/8) are muxed by picasso-pinmux.c. */
++			spi1: spi@984000 {
++				compatible = "qcom,geni-spi";
+ 				reg = <0 0x00984000 0 0x4000>;
+ 				clock-names = "se";
+ 				clocks = <&gcc GCC_QUPV3_WRAP1_S1_CLK>;
+ 				interrupts = <GIC_SPI 354 IRQ_TYPE_LEVEL_HIGH>;
+-				/* the FIFO interface of this SE is disabled: GPI only */
+-				dmas = <&gpi_dma0 0 1 QCOM_GPI_I2C>,
+-				       <&gpi_dma0 1 1 QCOM_GPI_I2C>;
+-				dma-names = "tx", "rx";
+-				pinctrl-names = "default";
+-				pinctrl-0 = <&qup_i2c1_default>;
+ 				#address-cells = <1>;
+ 				#size-cells = <0>;
+ 				interconnects = <&qup_virt MASTER_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS

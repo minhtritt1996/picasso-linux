@@ -1,0 +1,37 @@
+diff --git a/drivers/bluetooth/hci_qca.c b/drivers/bluetooth/hci_qca.c
+index 7089e9b63..2f91005fa 100644
+--- a/drivers/bluetooth/hci_qca.c
++++ b/drivers/bluetooth/hci_qca.c
+@@ -1280,10 +1280,32 @@ static const struct h4_recv_pkt qca_recv_pkts[] = {
+ static int qca_recv(struct hci_uart *hu, const void *data, int count)
+ {
+ 	struct qca_data *qca = hu->priv;
++	int dropped = 0;
+ 
+ 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
+ 		return -EUNATCH;
+ 
++	/*
++	 * While the patch/NVM TLV is downloaded the WCN3991 emits bare 0xFD
++	 * bytes that are not at a packet boundary: h4_recv_buf() rejects the
++	 * whole read ("Frame reassembly failed") and the download stalls. Drop
++	 * them during that window only - once the download is done IBS is
++	 * re-enabled and a bare 0xFD is a valid wake indication that the IBS
++	 * state machine must see (dropping it leaves rx_ibs_state asleep and
++	 * the controller never answers again).
++	 */
++	while (count > 0 && qca->rx_skb == NULL &&
++	       test_bit(QCA_IBS_DISABLED, &qca->flags) &&
++	       *(const u8 *)data == 0xFD) {
++		data = (const u8 *)data + 1;
++		count--;
++		dropped++;
++	}
++	if (dropped)
++		bt_dev_dbg(hu->hdev, "dropped %d flow-control byte(s)", dropped);
++	if (count <= 0)
++		return 0;
++
+ 	qca->rx_skb = h4_recv_buf(hu, qca->rx_skb, data, count,
+ 				  qca_recv_pkts, ARRAY_SIZE(qca_recv_pkts));
+ 	if (IS_ERR(qca->rx_skb)) {

@@ -43,7 +43,7 @@ workspace has actually observed; everything else is `not yet`.
 | Touch accurate to the edges | scripted taps at 4 corners + centre land | not yet (NT36672C driver present) |
 | USB networking + charging current | gadget link up 1 h, `/sys/class/power_supply` current | ACM console only; no CDC-ECM gadget yet |
 | Wi-Fi associates, traffic 1 h | ping gateway + large transfer | works over `wlan0` + NetworkManager (ssh verified); 1 h soak not run |
-| Bluetooth pairs a headset, A2DP plays | pair, connect, play, reconnect after reboot | controller registers with mgmt: not yet (patch and NVM download complete) |
+| Bluetooth pairs a headset, A2DP plays | pair, connect, play, reconnect after reboot | controller registers with mgmt, powers on, BR/EDR+LE discovery finds devices (2026-11-16); pairing/A2DP not yet |
 | Speaker, earpiece, mic, jack | tone out, record in | not yet |
 | Modem: SIM, registration, data, calls both ways, SMS/MMS | real traffic; a call needs a human | not yet — modem trips `DOG detects stalled initialization` |
 | Camera: still + video per sensor, correct colours | per-channel means/variance, colour on a known scene | not yet |

@@ -877,3 +877,51 @@ at the HCI reset/`HCI_QUIRK` path and the `-84` frame).
 
 Meanwhile, the USB-ACM console wedged again during the bluetoothd start; the
 phone is reachable over Wi-Fi (NM leased <lan-ip> this boot).
+
+### Bluetooth — WORKS (2026-11-16): controller registers, powers on, discovers
+
+```
+[    6.198405] Bluetooth: hci0: QCA setup on UART is completed
+hci0:  Primary controller
+        addr 02:00:00:00:00:01 version 11 manufacturer 29 class 0x000110
+        current settings: powered ssp br/edr le secure-conn wide-band-speech ll-privacy …
+hci0 dev_found: DF:70:3A:F2:AE:14 type LE Random rssi -88 flags 0x0004
+```
+
+`bluetoothctl list` shows the controller and `btmgmt --index 0 power on` completes.
+
+**Why it had never registered.** `btqca` sets `HCI_QUIRK_USE_BDADDR_PROPERTY`
+(`drivers/bluetooth/btqca.c:708`). With no `local-bd-address` the controller's
+public address stays zero, so `hci_dev_setup_sync()` marks it
+`HCI_UNCONFIGURED`, returns through `hci_unconf_init_sync()` — and
+`hci_init_sync()` never runs. `HCI_SETUP` therefore stays set and mgmt lists no
+index: `btmgmt info` said "Index list with 0 items" while `hci0` did exist and
+the firmware download had completed. Instrumenting `hci_init1_sync` and the
+`hci_init_sync` return in `net/bluetooth/hci_sync.c` printed *nothing*, which is
+what proved the stall was before init rather than inside it. Adding
+`local-bd-address = [ 01 00 00 00 00 02 ]` to the DTS (bytes are byte-swapped
+by `qca_set_bdaddr`, so the air address is `02:00:00:00:00:01`, locally
+administered) fixed registration on the first try:
+
+```
+picasso-hci: init1 enter (quirk RESET_ON_CLOSE 0)
+picasso-hci: reset returned 0
+picasso-hci: br_init1 returned 0
+picasso-hci: hci_init_sync returned 0
+```
+
+The address in the DT is a bring-up placeholder. The real one is provisioned at
+the factory and lives in the phone's `persist` partition; reading it there and
+passing it at boot is the follow-up.
+
+The `0xFD` flow-control bytes the chip emits while accepting a patch/NVM TLV are
+dropped only while `QCA_IBS_DISABLED` (patch `0008-bluetooth-hci-qca-wcn3991-flow-control`).
+Verified end to end: `QCA setup on UART is completed`, then discovery finds real
+devices. Still open: two `Frame reassembly failed (-84)` per boot, one before the
+ROM version read and one during scanning — the parser rejects a byte that is not
+a packet type at a packet boundary; operation is unaffected, but it should be
+understood (candidate: a 0xFD arriving while `rx_skb != NULL`).
+
+Fast loop used for all of this (one cycle ≈ 130 s): `reboot` from Linux → loader
+comes up in 42 s → `oem ramdisk` → `stage` the 606 MB resident rootfs (19 s) →
+`stage` the payload (2 s) → `oem run` → USB console in 12 s.

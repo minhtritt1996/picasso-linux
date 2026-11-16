@@ -68,10 +68,10 @@ index dd8198372..740570583 100644
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_LD9040) += panel-samsung-ld9040.o
 diff --git a/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c b/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c
 new file mode 100644
-index 000000000..232e070e3
+index 000000000..817046adf
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,449 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Xiaomi Redmi K30 5G (picasso) DSI panel "xiaomi 37 02 0a" (g7a), 1080x2400
@@ -96,7 +96,7 @@ index 000000000..232e070e3
 +#include <drm/drm_panel.h>
 +#include <video/mipi_display.h>
 +
-+#define G7A_NO_DSC 0	/* DSC (native panel mode) */
++#define G7A_NO_DSC 0	/* uncompressed 8bpc, loader-splash compatible */
 +#define G7A_WIDTH		1080
 +#define G7A_HEIGHT		2400
 +#define G7A_MAX_BRIGHTNESS	0x7ff
@@ -318,12 +318,17 @@ index 000000000..232e070e3
 +	if (ret)
 +		return ret;
 +
-+	/* downstream reset sequence: 1 (5 ms), 0 (1 ms), 1 (10 ms) */
-+	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-+	msleep(5);
++	/*
++	 * Downstream drives the line high (5 ms), low (1 ms), high (10 ms) and
++	 * leaves it high. The DT describes the reset as GPIO_ACTIVE_LOW, so the
++	 * logical values are inverted: end deasserted, or the panel never leaves
++	 * reset and every DCS command times out.
++	 */
 +	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-+	msleep(1);
++	msleep(5);
 +	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	msleep(1);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
 +	msleep(10);
 +
 +	dev_info(&ctx->dsi->dev, "prepare: sending init sequence\n");
@@ -335,6 +340,12 @@ index 000000000..232e070e3
 +		mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
 +		mipi_dsi_compression_mode_multi(&dsi_ctx, true);
 +		dev_info(&ctx->dsi->dev, "prepare: PPS sent\n");
++	} else if (dsi_ctx.accum_err == 0) {
++		/* No-DSC fork: the bootloader left the panel's DSC decoder on,
++		 * so an uncompressed stream would be decoded as garbage.
++		 */
++		mipi_dsi_compression_mode_multi(&dsi_ctx, false);
++		dev_info(&ctx->dsi->dev, "prepare: DSC disabled\n");
 +	}
 +
 +	/* The vendor table's 0x11/0x29 carry a parameter byte; send clean DCS
@@ -367,16 +378,25 @@ index 000000000..232e070e3
 +		return 0;
 +
 +	g7a_send_off(&dsi_ctx);
-+	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	/* hold the panel in reset (logical 1 = physical low, active low) */
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 +	regulator_disable(ctx->vddio);
 +	ctx->prepared = false;
 +
 +	return 0;
 +}
 +
++#if G7A_NO_DSC
++/* Uncompressed 8bpc over 4 lanes: 120 Hz needs 7.5 Gbps, far past the link, so
++ * the no-DSC fork runs the panel's 60 Hz mode (1.04 Gbps/lane). */
++#define G7A_VREFRESH 60
++#else
++#define G7A_VREFRESH 120
++#endif
++
 +static const struct drm_display_mode g7a_mode = {
-+	/* 1080 + 40 + 12 + 40 = 1172; 2400 + 32 + 2 + 30 = 2464; 120 Hz */
-+	.clock = 1172 * 2464 * 120 / 1000,
++	/* 1080 + 40 + 12 + 40 = 1172; 2400 + 32 + 2 + 30 = 2464 */
++	.clock = 1172 * 2464 * G7A_VREFRESH / 1000,
 +	.hdisplay = G7A_WIDTH,
 +	.hsync_start = G7A_WIDTH + 40,
 +	.hsync_end = G7A_WIDTH + 40 + 12,

@@ -256,6 +256,16 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bring-up delta to export)"
 	fi
+	local p8="picasso/0008-bluetooth-hci-qca-wcn3991-flow-control.patch"
+	echo "==> Exporting $p8"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/bluetooth/hci_qca.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$p8"
+	else
+		rm -f "$t"
+		echo "    (no bluetooth delta to export)"
+	fi
 	echo "    [OK] regenerated; run ./build.sh check"
 }
 
