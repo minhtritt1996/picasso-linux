@@ -1349,3 +1349,31 @@ Still open:
 - `rtc0` still has no `wakealarm`, so an unattended self-wake test is not
   possible yet (PMIC alarm IRQ not wired); the alarm would also let a test wake
   the phone without hands.
+
+### Suspend without `cpuidle.off`: same clean resume
+
+Second real suspend, this time with the plain cmdline (no `cpuidle.off=1`, only
+`no_console_suspend pm_print_times` kept for the run), woken by **volume-up**:
+
+```
+[44.126180] PM: suspend entry (s2idle)
+[47.893543] PM: suspend devices took 3.680 seconds
+[48.671859] PM: resume devices took 0.756 seconds
+[48.677336] PM: suspend exit
+```
+
+0.756 s to resume every device, ~1 s from wake to prompt - the same as with
+cpuidle disabled (0.716 s), so the PSCI `domain-idle-states` (cluster collapse,
+`arm,psci-suspend-param = <0x41000044>`) are **not** a problem and the boot flag
+can go. Suspend/resume is therefore working on this port:
+
+- **enter**: `echo mem` -> s2idle, 3.7 s for all devices;
+- **wake**: volume-up (or volume-down); the PMIC power key instead drops
+  PS_HOLD and powers the phone off, so it is not a wake source in the DT;
+- **after**: USB gadget, `wlan0` with a fresh lease, backlight and uptime all
+  come back;
+- the only missing piece for unattended testing is an RTC alarm
+  (`/sys/class/rtc/rtc0/wakealarm` does not exist: PMIC alarm IRQ not wired).
+
+Still to do for the done-list: 20 sleep/wake cycles, and checking that modem and
+Wi-Fi still work after each (the Luma brief asks for exactly that).
