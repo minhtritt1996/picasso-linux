@@ -33,10 +33,10 @@ index ef029f232..f0db79ff6 100644
 +obj-$(CONFIG_TOUCHSCREEN_PICASSO_NVT)	+= picasso-nvt-spi.o
 diff --git a/drivers/input/touchscreen/picasso-nvt-spi.c b/drivers/input/touchscreen/picasso-nvt-spi.c
 new file mode 100644
-index 000000000..5de9db627
+index 000000000..5f8975246
 --- /dev/null
 +++ b/drivers/input/touchscreen/picasso-nvt-spi.c
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,568 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Novatek NT36672C touchscreen on the Xiaomi Redmi K30 5G (picasso, SM7250).
@@ -395,8 +395,12 @@ index 000000000..5de9db627
 +	struct nvt_ts *ts = container_of(work, struct nvt_ts, poll.work);
 +	u8 report[NVT_REPORT_LEN];
 +
-+	if (!nvt_read_mapped(ts, ts->event_buf, report, sizeof(report)))
++	int ret = nvt_read_mapped(ts, ts->event_buf, report, sizeof(report));
++
++	if (!ret)
 +		nvt_report(ts, report);
++	else
++		dev_warn_once(&ts->spi->dev, "report read failed: %d; retrying\n", ret);
 +	schedule_delayed_work(&ts->poll, msecs_to_jiffies(NVT_POLL_MS));
 +}
 +
@@ -508,13 +512,13 @@ index 000000000..5de9db627
 +
 +			if (nvt_read_mapped(ts, ts->event_buf | NVT_MAP_FWINFO,
 +					    info, sizeof(info)) == 0) {
-+				u16 xmax = (info[5] << 8) | info[6];
-+				u16 ymax = (info[7] << 8) | info[8];
++				u16 xmax = (info[4] << 8) | info[5];
++				u16 ymax = (info[6] << 8) | info[7];
 +
 +				dev_info(&spi->dev,
 +					 "fw info: ver 0x%02x (~0x%02x) x_num %u y_num %u abs %ux%u\n",
-+					 info[1], info[2], info[3], info[4], xmax, ymax);
-+				if ((u8)(info[1] + info[2]) != 0xff)
++					 info[0], info[1], info[2], info[3], xmax, ymax);
++				if ((u8)(info[0] + info[1]) != 0xff)
 +					dev_warn(&spi->dev, "fw info is broken\n");
 +			} else {
 +				dev_warn(&spi->dev, "fw info read failed\n");
@@ -557,6 +561,24 @@ index 000000000..5de9db627
 +	cancel_delayed_work_sync(&ts->poll);
 +}
 +
++static int nvt_suspend(struct device *dev)
++{
++	struct nvt_ts *ts = dev_get_drvdata(dev);
++
++	cancel_delayed_work_sync(&ts->poll);
++	return 0;
++}
++
++static int nvt_resume(struct device *dev)
++{
++	struct nvt_ts *ts = dev_get_drvdata(dev);
++
++	schedule_delayed_work(&ts->poll, msecs_to_jiffies(200));
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(nvt_pm_ops, nvt_suspend, nvt_resume);
++
 +static const struct spi_device_id nvt_id[] = {
 +	{ "picasso-nvt-ts-spi", 0 },
 +	{ }
@@ -573,6 +595,7 @@ index 000000000..5de9db627
 +	.driver = {
 +		.name = "picasso-nvt-ts",
 +		.of_match_table = nvt_of_match,
++		.pm = pm_sleep_ptr(&nvt_pm_ops),
 +	},
 +	.id_table = nvt_id,
 +	.probe = nvt_probe,

@@ -1377,3 +1377,41 @@ can go. Suspend/resume is therefore working on this port:
 
 Still to do for the done-list: 20 sleep/wake cycles, and checking that modem and
 Wi-Fi still work after each (the Luma brief asks for exactly that).
+
+### Touch firmware runs and finger reports arrive (2026-11-16)
+
+Tested the coordinator's merged RAM payload, SHA256
+`5da42ba36ac18436d22d21af5118eb5349b20b3a5649abc5f423ebb9ce036ead`,
+with the Fedora rootfs containing the decoded fw01 above. Cmdline:
+`console=tty0 loglevel=7 picasso_pinmux.mode=write rdinit=/usr/lib/systemd/systemd systemd.show_status=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10 no_console_suspend pm_print_times`.
+No reboot was needed: inspected the boot upload, then rebound only spi0.0.
+Exact rebind logs:
+
+```
+SRAM partition 0 addr=0x0 bytes=80504
+partition 0 golden CRC=0x58e87d07
+SRAM partition 1 addr=0x27140 bytes=16792
+partition 1 golden CRC=0x8b987915
+SRAM partition 14 addr=0x27040 bytes=256
+SRAM upload CRC enabled BOOT_RDY ret=0
+upload reset state=0xa1 polls=1 ret=0
+upload CRC flags=0x4 done=1 ilm=0 dlm=0
+fw reset state 0xa1 after 1 polls (fw running)
+```
+
+Two pre-rebind probes (60s and 30s) gave zero reports after earlier suspend;
+the log contained `Attempted to sync while suspend`. Rebinding re-uploaded fw01
+successfully. With user-confirmed tapping and swiping during the next 60s,
+`tools/touch-probe.py` measured **83 SYN_REPORT**, EV_ABS=357, EV_KEY=18,
+slots [0,1], X=216..739 (136 samples), Y=86..2204 (161 samples), and repeated
+BTN_TOUCH 1/0 transitions. Coordinates are within 0..1079 / 0..2399; edge
+accuracy and all ten fingers remain untested.
+
+Added PM hooks to cancel polling before suspend and restart it on resume;
+failed SPI reads only warn once and retry, never emit a partial frame. Also
+corrected firmware-info diagnostic offsets (the helper already strips the SPI
+command byte); the previous broken-info warning was a diagnostic indexing bug.
+These follow-up changes are compiled offline; touch across suspend with this
+version is still untested. Lockdown bytes remain unknown, fw01 works for this
+panel, and firmware provenance is the downstream ihex rather than the MIUI
+vendor image, which lacks these files. No flash operation was performed.
