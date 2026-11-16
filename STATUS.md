@@ -1228,3 +1228,10 @@ is invented here; obtaining those bytes still needs a separate DSI read path.
 `/cache/pmtest.log` on the UFS cache partition, so the result survives both the
 console hangup and a reset. Next: power-cycle, run it, read the log from the next
 boot.
+
+Review follow-up: SRAM upload now retries the complete reset/download/CRC/
+BOOT_RDY/reset-state check up to three times and decodes CRC status bits
+(done=bit2, ILM=bit0, DLM=bit1). NT36675-only support is explicit.
+The length transfer already carried three data bytes plus the command; its
+third byte is now masked to bit 16 exactly like downstream `hw_crc > 1`.
+No payload rebuild or phone access was performed for this follow-up.
