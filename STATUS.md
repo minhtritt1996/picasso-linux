@@ -2454,3 +2454,28 @@ debug worker; every change was made in `build/linux/`, exported with `./build.sh
 - `build/out/sm7250-xiaomi-picasso.dtb`: `d11875dedf3752b8ecf75f0a1563e9154cc9d4237a33f78274db44385f6d58e7`
 - `build/out/boot-linux.img`: `3964178f8592a406682142895b1b921757ac26fcec36eb693ce31076253064df`
 - `build/out/payload-linux.bin`: `0a70468f6d34c96cb1e10ef13b9505e55d0c737d29a2fbd4051dfbe28946c2f9`
+
+### 20. GPU clock: the fused limit is 625 MHz, not 750 (2026-11-17)
+
+Question raised by an aggregator spec sheet claiming "Adreno 620 @ 750 MHz". Checked against the
+Qualcomm SD765G product brief, the vendor tree and the live device:
+
+- The Qualcomm brief (`prod_brief_qcom_sd765g_5g_1.pdf`) **publishes no GPU clock**: it lists
+  "Adreno 620 GPU", "10% faster graphics rendering vs the standard Snapdragon 765", API support
+  Vulkan 1.1 / OpenCL 2.0 FP / DX12, Hexagon 696, Spectra 355, X52, 7 nm, CPU "up to 2.4 GHz",
+  part number **SM7250-AB**. 750 MHz is not a Qualcomm figure.
+- The IP OPP table in the vendor DTS does contain 8 levels
+  (`lito-gpu.dtsi:24-60`): 750 (TURBO), 700/670 (NOM_L1), 625/540 (NOM), 500 (SVS_L1),
+  400 (SVS), 275 (LOW_SVS). But the same file gates them per **fused speed bin**
+  (`qcom,gpu-pwrlevel-bins`, `lito-gpu.dtsi:187-330`): bin 0 -> max **625 MHz**, bin 132 -> max
+  **625 MHz**, bin 115 -> max **540 MHz**. Android therefore never runs this phone at 750.
+- Live device: `mainline`'s `opp-supported-hw` filter selects only 275/400/500/625
+  (`/sys/class/devfreq/3d00000.gpu/available_frequencies`), i.e. the fused bin is 0 or 132
+  (540 is mask 0x08 and is filtered out; 625/500 are 0x03, 400/275 are 0x0b). `dmesg` has no
+  "missing support for speed-bin" line, so the fuse decoded to a known bin.
+
+Conclusion: the mainline OPP table (`sm7250.dtsi:1360-1395`, max 625 MHz with
+`opp-level = RPMH_REGULATOR_LEVEL_NOM`) is **correct for this hardware**; adding 670/700/750 would
+be an overclock past the fused limit. No kernel change made. Re-verified after the 45-minute
+watchdog returned the phone to the loader and it was RAM-booted again (`<lan-ip>`, uptime 0):
+same OPP set, `cur_freq` 275 MHz idle, GPU bound, no faults.
