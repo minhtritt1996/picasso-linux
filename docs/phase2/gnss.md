@@ -406,3 +406,22 @@ cat /usr/share/xdg-desktop-portal/portals/gtk.portal
 Package facts (read-only `pacman -Si` on the phone): `libqmi 1.38.0-2`, `modemmanager 1.24.2-2`
 (`Depends On: … libqmi libqrtr-glib …`), `geoclue 2.8.2-2`, `gpsd 3.27.5-1`; nothing GNSS-related is
 installed.
+
+## 8. Update (2026-11-17, after libqmi was installed): the client lifetime matters
+
+- `--loc-start` **succeeds** when the LOC client is kept across the command
+  (`qmicli -d qrtr://0 --loc-noop --client-no-release-cid` prints `CID: '1'`, then every later
+  invocation carries `--client-cid=1 --client-no-release-cid`). With a fresh client per invocation
+  (the naive `--loc-start`) the modem answers `QMI protocol error (46): 'GeneralError'` - the earlier
+  "engine refuses to start" reading was wrong, it is a per-client session state issue.
+- Reusing that CID from a *different process* fails later with `Unknown client 1 for service loc`
+  (the LOC service drops the client when the owning process exits), so set-nmea-types + start must be
+  issued while the client is alive; qmicli refuses `--loc-start --loc-follow-nmea` in one call
+  ("too many LOC actions requested").
+- `--loc-follow-nmea` and `--loc-follow-position-report` on their own run cleanly (no error) but emit
+  **nothing** for 130 s (`0` lines), and `--loc-get-position-report --loc-timeout=40` on the stale CID
+  also fails with `Unknown client`. So the remaining gap is the engine producing traces/fixes, not the
+  QMI plumbing: either the firmware only emits NMEA on a first fix (no sky view indoors) or the GNSS
+  RF/engine needs an assist step (`--loc-inject-time` on the live client, XTRA data).
+- Next experiment: allocate a client, inject time, set NMEA types, start, and *stay in the same
+  process* while following (a small libqmi program, not qmicli), then repeat outdoors.

@@ -2536,3 +2536,17 @@ Verified on hardware (`<lan-ip>`, kernel with 0016):
 
 Gates: `./tools/policy-scan.sh` OK; `./build.sh check` applies the 31-patch series to a clean tree
 and builds the DTB (see the run recorded below).
+
+### 23. GNSS follow-up: client lifetime, not engine refusal (2026-11-17)
+
+- `--loc-start` **succeeds** with a persistent LOC client
+  (`qmicli -d qrtr://0 --loc-noop --client-no-release-cid` -> `CID: '1'`, then
+  `--client-cid=1 --client-no-release-cid` on every call), where the naive per-invocation client got
+  `QMI protocol error (46): 'GeneralError'`. The engine does accept start.
+- Cross-process reuse fails (`Unknown client 1 for service loc`), and qmicli refuses
+  `--loc-start --loc-follow-nmea` in one invocation (`too many LOC actions requested`).
+- `--loc-follow-nmea` alone runs without error but produced **0 lines in 130 s**
+  (`/tmp/nmea2.txt`), and `--loc-get-position-report --loc-timeout=40` on the stale CID fails.
+- So: QMI/LOC plumbing works; the open question is trace generation (first-fix-only firmware vs an
+  assist step vs no sky view indoors). Next: one-process libqmi client that injects time, sets NMEA
+  types, starts and follows, then the same outdoors. Recorded in `docs/phase2/gnss.md` §8.
