@@ -2330,3 +2330,127 @@ Measured on `<lan-ip>` (`#199`) with 120Hz touch-swipe injection into `/dev/inpu
 | **C. Multitasking** (TikTok + Chromium + Denial Settings) | **120.0/s** (`+532` in `4.43s`) | **98.6/s** | **267.5/s** | `625 MHz` | `aoapp.musically` `68.4%`, `chromium` `27.1%/25.3%/16.6%`, `settings` `21.7%`, `system_server` `5.1%`, `surfaceflinger` `4.5%` |
 
 - Chromium picked up `/home/picasso/.config/chromium-flags.conf` (`--ozone-platform=wayland --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL --ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy`) with GPU process (`--render-node-override=/dev/dri/renderD128`) active on Adreno 620.
+
+### 19. Phase-2 bring-up: haptics, NFC, audio capture, camera CCI, hotspot, GNSS, cellular, health (2026-11-17)
+
+Work orchestrated through 8 Orca `omp` research workers (docs in `docs/phase2/`) plus one follow-up
+debug worker; every change was made in `build/linux/`, exported with `./build.sh export-patches`
+(0001 sm7250.dtsi, 0002 board DTS, 0007 pinmux) and verified over RAM boot only.
+
+#### Haptics (PM7250B vibrator LDO) — WORKING
+- Hardware: `pm7250b@3` SPMI peripheral `0x5300`, vendor `qcom,qpnp-vibrator-ldo`, 3.0 V,
+  overdrive off (vendor DT + `leds-qpnp-vibrator-ldo.c:18-29` register map).
+- **No new driver**: mainline `pm8xxx-vibrator.c` already speaks the same registers through its
+  `pmi632` set, and the binding lists `qcom,pm7250b-vib` (`qcom,pm8xxx-vib.yaml:21-26`).
+  DT: `vibrator@5300 { compatible = "qcom,pm7250b-vib", "qcom,pmi632-vib"; reg = <0x5300>; }`,
+  config `CONFIG_INPUT_PM8XXX_VIBRATOR=y`.
+- Verified (`<lan-ip>`): input `pm8xxx_vib_ffmemless` = `/dev/input/event0`,
+  `EV=200001` (FF), udev `HAPTICD_DEVICE=1` + `HAPTICD_ID=builtin`, `hapticd.service` active.
+- **Physical proof** with the BMI26x accelerometer (`steinerctl raw accel 100`, host timestamps,
+  3 x 1.2 s pulses at 2 s intervals): per-second |a| std = 0.013/0.010 before, **0.053** (pulse 1),
+  0.010 (gap), **0.045/0.038** (pulse 2), 0.010 (gap), **0.029** (pulse 3). Motor moves.
+
+#### NFC (NXP NCI on GENI SE0) — bus + driver live, IRQ blocked by TLMM
+- Live node is `xiaomi-sm7250-common.dtsi:327-343` (`&qupv3_se0_i2c`, `nq@28`), not the lito-mtp one.
+- DT added: `&i2c0` (i2c@880000) 400 kHz + `nfc@28` (`nxp,nxp-nci-i2c`, `enable-gpios` tlmm 12,
+  `firmware-gpios` tlmm 35, `interrupts` tlmm 34 LEVEL_HIGH). Pads muxed by `picasso-pinmux`
+  (gpio42/43 qup00; VEN high, FIRM low, CLKREQ/IRQ pulled-up inputs) because the EAST tile is not
+  mapped by `&tlmm`.
+- Verified: `i2cdetect -y -r 0` shows **`UU` at 0x28** (claimed by `nxp-nci_i2c`),
+  `/sys/class/nfc/nfc0` exists, `/proc/interrupts` line `msmgpio 34 ... nxp-nci_i2c` counts **0**.
+- Blocker: the NCI handshake needs that interrupt; fixing it means mapping the EAST tile (STATUS
+  "TLMM (pinmux) — root cause" / `docs/phase2/nfc.md` §R1).
+
+#### Audio capture (WCD9385 + Bolero TX macro + LPI DMIC) — card and PCM live, DSP start fails
+- Added: `vamacro/rxmacro/txmacro` (0x3370000/0x3200000/0x3220000), `swr1` (IRQ 155) / `swr2`
+  (IRQ 166) with the vendor SWR port tables, `lpass_tlmm` with SWR/DMIC pin states, `wcd9385`
+  codec (reset gpio57 pulsed by picasso-pinmux, BOB mic-bias), `vreg_bob` (3.008-3.96 V),
+  `audio-routing`, `MultiMedia2` capture FE (`Q6ASM_DAI_TX`) and `WCD Capture` BE
+  (`TX_CODEC_DMA_TX_3`), plus `CONFIG_SND_SOC_LPASS_{MACRO_COMMON,RX,TX,VA}_MACRO=y`,
+  `CONFIG_PINCTRL_{LPASS_LPI,SM8250_LPASS_LPI}=y`.
+- Verified: `/sys/bus/soundwire/devices` has both slaves (`sdw:2:0:0217:010d:00:4`,
+  `sdw:3:0:0217:010d:00:3`), `wcd938x_codec` bound, card registers with
+  `00-00 MultiMedia1 playback` + **`00-01 MultiMedia2 capture`**, `arecord -l` lists
+  `device 1: MultiMedia2`, and playback still works.
+- **Blocker**: `arecord -D hw:0,1 ...` returns `Input/output error` immediately after a successful
+  `pcm_open` (all `dai_startup` calls return 0). dmesg per attempt:
+  `qcom-q6afe aprsvc:service:4:4: cmd = 0x100f6 returned error = 0x1` / `Unknown cmd 0x100f6`
+  (`AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST`, q6afe.c:52) - the vendor ADSP firmware does not
+  implement mainline's LPASS clock-vote protocol.
+- Follow-up root-cause pass (`docs/phase2/microphone-capture-eio.md`, committed): the EIO is the
+  ALSA core's `wait_for_avail()` timeout (`sound/core/pcm_lib.c:1952,2027`), not an AFE error - the
+  kernel chain (AFE port 0xB037, ASM stream run, ADM map, swr2, TX macro clocks) all start, the DSP
+  delivers the 8 pre-queued zero buffers and never another `READ_DONE`. The doc's first hypothesis
+  (codec SoundWire TX ports disabled) was tested on hardware: `ADC1 Switch`/`ADC2 Switch` read
+  `on`, and the DMIC route (`DMIC2 Switch`, `TX DEC2 MUX=MSM_DMIC`, `TX DMIC MUX2=DMIC2`) was also
+  enabled - `arecord` still fails with EIO in both routes, so the stall is downstream of the codec
+  switches (TX macro DIN / ADM map / ASM run status). Next: the `wcd938x-sdw` guard patch from
+  §6.2 plus a checked `ASM_SESSION_CMD_RUN_V2` return.
+
+#### Camera stage 1/2 (CCI + camera rails) — adapters live
+- Added `camcc`-backed `cci0`/`cci1` (`status = "okay"`), the four RPMH camera parents
+  (`l16a` 2.8 V, `s5a` 1.8 V, `s8c` 1.2 V, shared `vreg_bob`), three GPIO-gated fixed rails, and
+  `&i2c9` (PM8008 presence bus) plus `CONFIG_SM_CAMCC_7250/I2C_QCOM_CCI/I2C_CHARDEV=y`.
+- Verified: six i2c adapters, three of them CCI - `i2c-3`/`i2c-4` = `cci@ac4a000/i2c-bus@0|1`,
+  `i2c-5` = `cci@ac4b000/i2c-bus@0`; PM8008 bus is `i2c-1` (`i2c@98c000`).
+- Sensors (IMX686 main, OV8856 UW, S5K3T2 front, S5K5E9 macro, GC02M1 depth) and the CAMSS graph
+  are stage 3; only OV8856 has a mainline driver (`docs/phase2/camera.md`).
+
+#### Wi-Fi hotspot (AP mode on ath10k_snoc) — AP up, DHCP + NAT armed
+- `ap0` created on `wlan0`'s phy (`type __ap`), explicit MAC, brought up by
+  `wpa_supplicant 2.12` (`mode=AP`, `ssid picasso-ap`, `channel 153 / 5765 MHz`, `wpa_state=COMPLETED`)
+  while the STA link stayed associated to the same channel (firmware advertises
+  `managed 1 + AP 1, channels<=1`).
+- networkd DHCP server (`/run/systemd/network/50-ap0.network`, 192.168.50.0/24) reports
+  `State: routable`; `nft` table `ip hotspot` has the forward + masquerade rules;
+  `ip_forward=1`. No package required (wpa_supplicant + systemd-networkd only).
+- Not proven: a client actually joining - the host has no Wi-Fi interface, so the DHCP lease /
+  `station dump` / NAT counters part of `docs/phase2/hotspot.md` §3.8 is still open.
+
+#### GNSS (QMI LOC service 16) — service answers, engine start refused
+- `libqmi 1.38.0` installed on the phone (Denial `extra` repo).
+- Verified: `qmicli -d qrtr://0 --loc-get-operation-mode` -> `standalone`;
+  `--loc-set-operation-mode=standalone` and `--loc-set-nmea-types=...` succeed;
+  `--loc-inject-time`, `--loc-inject-position`, `--loc-set-engine-lock` succeed.
+- **Blocker**: `--loc-start` fails with `QMI protocol error (46): 'GeneralError'`, and
+  `--loc-get-gnss-sv-info` times out, so no NMEA/fix yet. No Geoclue/xdg-portal Location backend
+  and no Android GNSS HAL exist on the image (`docs/phase2/gnss.md`).
+
+#### Cellular (IPA + QMI) — IPA bound, UIM answers, SIM has no ATR
+- DT: `ipa@1e40000` (`qcom,sm6350-ipa` = IPAv4.7 data) with `ipa-reg`/`ipa-shared`/`gsi` windows,
+  IRQs 311/432 + IPA SMP2P entries added to `smp2p-mpss` in `sm7250.dtsi`, `qcom,gsi-loader = "modem"`;
+  config `CONFIG_QCOM_IPA=y`, `CONFIG_RMNET=y`.
+- Verified: platform device `1e40000.ipa` **bound to the `ipa` driver**; no `wwan0`/`rmnet*`
+  netdev appears (the modem never signals IPA setup-ready). `modemmanager` + `libqmi` installed;
+  `mmcli` present.
+- QMI works: `qmicli --uim-get-card-status` -> Slot 1 `Card state: 'error: no-atr-received (3)'`,
+  Slot 2 same; `--uim-sim-power-off/on` succeed (state changes to `error: power-down (1)`), but the
+  ATR never arrives; `--nas-get-serving-system` -> `not-registered-searching`, `detached`.
+- Blockers: SIM ATR (SIM rail/clock not reaching the card) and then the IPA data path.
+
+#### Residual-error sweep (health) — five S1/S2 fixed, two documented
+- `CONFIG_ZRAM=y` -> `zram-swap.service` **active**, `/dev/zram0 2.7 GB` swap.
+- `CONFIG_RTC_DRV_PM8XXX=y` -> `/sys/class/rtc/rtc1` = `rtc-pm8xxx` (no more `Failed to read RTC`).
+- `CONFIG_QCOM_SPMI_TEMP_ALARM=y` -> thermal zones `pm8150-thermal`, `pm8150l-thermal`,
+  `pm7250b-thermal` (51.6/53.3/44.4 C at check time).
+- `CONFIG_QCOM_SOCINFO=y` -> `/sys/devices/soc0/serial_number` = `1312402842` (BT address service
+  can now succeed).
+- `CONFIG_LEDS_CLASS_MULTICOLOR=y` + `CONFIG_LEDS_QCOM_LPG=y` (=`QCOM_PBS=n`) + `&pm8150l_lpg`
+  with the single populated channel -> **`/sys/class/leds/blue:indicator`**, `brightness=255`
+  accepted.
+- Type-C (`pm7250b_typec`) is wired in the DTS and `TYPEC=y`, but
+  `CONFIG_TYPEC_QCOM_PMIC` stays `=m` because it is `select DRM_AUX_HPD_BRIDGE if DRM_BRIDGE && OF`
+  and `DRM_BRIDGE=m`; forcing it `=y` would drag DRM bridge plumbing, so `/sys/class/typec` is still
+  absent (documented, `docs/phase2/health-audit.md` §3b-1).
+- Not changed on purpose: Android cgroup-v1 expectations, healthd sysfs paths, single-slot
+  `slot-success.service`, `/proc` read-only inside the Droidloom cell - all userland/image issues
+  (`docs/phase2/health-audit.md` §1 items 6/10/13/15).
+
+#### Artifacts and gates
+- `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+- `./build.sh check`: see the run recorded below (patches + DTB on a clean tree).
+- `build/out/Image`: `c40c173690dd201939aadbf489f89c38484f8470a11850872c7c9960a7732b2c`
+- `build/out/initrd.cpio.gz`: `70fd8350d00f8d62b7d275b1038119b2a697253738b91f2f7eac59344dc364cb`
+- `build/out/sm7250-xiaomi-picasso.dtb`: `d11875dedf3752b8ecf75f0a1563e9154cc9d4237a33f78274db44385f6d58e7`
+- `build/out/boot-linux.img`: `3964178f8592a406682142895b1b921757ac26fcec36eb693ce31076253064df`
+- `build/out/payload-linux.bin`: `0a70468f6d34c96cb1e10ef13b9505e55d0c737d29a2fbd4051dfbe28946c2f9`

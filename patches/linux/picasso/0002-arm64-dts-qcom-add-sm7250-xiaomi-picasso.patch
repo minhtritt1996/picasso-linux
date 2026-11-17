@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..37ff435ba
+index 000000000..41bc4669d
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,765 @@
+@@ -0,0 +1,1280 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -45,6 +45,7 @@ index 000000000..37ff435ba
 +/dts-v1/;
 +
 +#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/leds/common.h>
 +#include <dt-bindings/sound/qcom,q6asm.h>
 +#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 +#include <dt-bindings/input/input.h>
@@ -513,6 +514,33 @@ index 000000000..37ff435ba
 +	status = "okay";
 +};
 +
++/*
++ * NFC: NXP NCI controller on QUPv3 wrapper 0 / SE0 (vendor qupv3_se0_i2c,
++ * xiaomi-sm7250-common.dtsi:322-343), address 0x28.  VEN on tlmm 12 (active
++ * high), firmware-download select on tlmm 35, IRQ on tlmm 34 which the vendor
++ * requests level-high.  The vendor runs the bus at 1 MHz; start at 400 kHz.
++ *
++ * All six pads are EAST-tile TLMM pins.  pinctrl-msm deliberately does not map
++ * that tile on this port, so drivers/soc/qcom/picasso-pinmux.c muxes the bus
++ * pads, drives VEN high and leaves IRQ/CLKREQ as pulled-up inputs; the client
++ * node therefore carries no pinctrl-* state.
++ */
++&i2c0 {
++	status = "okay";
++	clock-frequency = <400000>;
++
++	nfc@28 {
++		compatible = "nxp,nxp-nci-i2c";
++		reg = <0x28>;
++
++		interrupt-parent = <&tlmm>;
++		interrupts = <34 IRQ_TYPE_LEVEL_HIGH>;
++
++		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
++		firmware-gpios = <&tlmm 35 GPIO_ACTIVE_HIGH>;
++	};
++};
++
 +/* geni-serial needs a line number, otherwise it fails with "Invalid line -19" */
 +/ {
 +	aliases {
@@ -605,6 +633,24 @@ index 000000000..37ff435ba
 +	pinctrl-names = "default";
 +	pinctrl-0 = <&sec_mi2s_default>;
 +
++	audio-routing =
++		/* analog mics: mainline wcd938x has no "Handset Mic" style
++		 * widgets, only AMICn inputs and MIC BIASn supplies
++		 * (vendor picasso-audio-overlay.dtsi:22-29 wiring). */
++		"AMIC1", "MIC BIAS1",
++		"AMIC2", "MIC BIAS2",
++		"AMIC5", "MIC BIAS3",
++		/* WCD9385 -> Bolero TX macro SoundWire ADC lanes */
++		"TX SWR_ADC0", "ADC1_OUTPUT",
++		"TX SWR_ADC1", "ADC2_OUTPUT",
++		"TX SWR_ADC2", "ADC3_OUTPUT",
++		"TX SWR_ADC3", "ADC4_OUTPUT",
++		/* LPI DMIC pads (vendor: TX DMICn <- MIC BIASn) */
++		"TX DMIC2", "MIC BIAS1",
++		"TX DMIC3", "MIC BIAS1",
++		"TX DMIC4", "MIC BIAS4",
++		"TX DMIC5", "MIC BIAS4";
++
 +	mm1-dai-link {
 +		link-name = "MultiMedia1";
 +
@@ -612,6 +658,15 @@ index 000000000..37ff435ba
 +			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
 +		};
 +
++	};
++
++	/* capture frontend: PCM device 1 (links are numbered in order) */
++	mm2-dai-link {
++		link-name = "MultiMedia2";
++
++		cpu {
++			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++		};
 +	};
 +
 +	sec-mi2s-dai-link {
@@ -627,6 +682,23 @@ index 000000000..37ff435ba
 +
 +		codec {
 +			sound-dai = <&speaker_amp>;
++		};
++	};
++
++	/* capture backend: AFE TX_CODEC_DMA_TX_3 = TX macro */
++	wcd-capture-dai-link {
++		link-name = "WCD Capture";
++
++		cpu {
++			sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
++		};
++
++		codec {
++			sound-dai = <&wcd9385 1>, <&swr2 0>, <&txmacro 0>;
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
 +		};
 +	};
 +};
@@ -648,10 +720,12 @@ index 000000000..37ff435ba
 +	};
 +};
 +
-+/* q6asm-dai needs one child per frontend dai; MM1 (id 0) is playback */
++/* q6asm-dai needs one child per frontend; Q6ASM_DAI_RX removes the capture
++ * stream, Q6ASM_DAI_TX removes playback (q6asm-dai.c).  dai@1 (MultiMedia2)
++ * is the capture frontend. */
 +&q6asmdai {
 +	dai@0 { reg = <0x0>; direction = <Q6ASM_DAI_RX>; };
-+	dai@1 { reg = <0x1>; direction = <Q6ASM_DAI_RX>; };
++	dai@1 { reg = <0x1>; direction = <Q6ASM_DAI_TX>; };
 +	dai@2 { reg = <0x2>; direction = <Q6ASM_DAI_RX>; };
 +	dai@3 { reg = <0x3>; direction = <Q6ASM_DAI_RX>; };
 +};
@@ -672,6 +746,22 @@ index 000000000..37ff435ba
 + * ONLINE/PRESENT/STATUS/CHARGE_TYPE and a charge_behaviour knob. */
 +&pm7250b_charger {
 +	status = "okay";
++};
++
++/* Haptics: PM7250B hosts the QPNP vibrator LDO at SPMI peripheral 0x5300
++ * (vendor `qcom,vibrator@5300` under `pm7250b@3`).  In-tree pm8xxx-vibrator
++ * drives it through its pmi632 register set (enable 0x46.7, 12-bit mV level
++ * at 0x40/0x41, 8 mV step): the vendor LDO and the pmi632 block are the same
++ * registers.  The vendor requests 3.0 V with overdrive disabled; the mainline
++ * driver has no overdrive and starts at its default level, so register the
++ * node and let ff-memless scale the rumble. */
++&spmi_bus {
++	pmic@3 {
++		vibrator@5300 {
++			compatible = "qcom,pm7250b-vib", "qcom,pmi632-vib";
++			reg = <0x5300>;
++		};
++	};
 +};
 +
 +&pm8150l_wled {
@@ -795,5 +885,430 @@ index 000000000..37ff435ba
 +		 * idles INT low and pulses it high (vendor uses EDGE_RISING) */
 +		interrupt-parent = <&tlmm>;
 +		interrupts = <5 IRQ_TYPE_EDGE_RISING>;
++	};
++};
++
++/*
++ * ---- Camera stage 1/2 and audio capture rails (2026-11-17) --------------
++ *
++ * camcc (clock-controller@ad00000) is already enabled in sm7250.dtsi; the CCI
++ * controllers are not.  Each i2c-bus@N child becomes one i2c adapter named
++ * "Qualcomm-CCI", so cci0 contributes two and cci1 one.
++ *
++ * Camera rail parents follow the downstream tree: S5A = VIO, S8C = VDIG,
++ * BOB = VANA, L16A = VAF.  Linux is the only RPMH voter on this boot, so they
++ * are voted and kept on.  The GPIO-gated rails are modelled as always-on until
++ * the EAST/WEST TLMM tiles are mapped; their enable pads are driven by
++ * picasso-pinmux.
++ *
++ * BOB doubles as the WCD9385 microphone-bias rail (`cdc-vdd-mic-bias` = BOB
++ * 3.296 V downstream), hence the shared node.
++ */
++&apps_rsc {
++	regulators-0 {
++		vreg_l16a_2p8: ldo16 {
++			regulator-name = "vreg_l16a_2p8";
++			regulator-min-microvolt = <2800000>;
++			regulator-max-microvolt = <2800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++
++		vreg_s5a_1p8: smps5 {
++			regulator-name = "vreg_s5a_1p8";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++	};
++
++	regulators-1 {
++		/* downstream floor is 3.008 V */
++		vreg_bob: bob {
++			regulator-name = "vreg_bob";
++			regulator-min-microvolt = <3008000>;
++			regulator-max-microvolt = <3960000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
++			regulator-boot-on;
++		};
++
++		vreg_s8c_1p2: smps8 {
++			regulator-name = "vreg_s8c_1p2";
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
++		};
++	};
++};
++
++/ {
++	camera_vio_1p8: regulator-camera-vio {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_vio_1p8";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		vin-supply = <&vreg_s5a_1p8>;
++		regulator-always-on;
++	};
++
++	camera_vana_2p8: regulator-camera-vana {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_vana_2p8";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		vin-supply = <&vreg_bob>;
++		regulator-always-on;
++	};
++
++	camera_vdig_1p2: regulator-camera-vdig {
++		compatible = "regulator-fixed";
++		regulator-name = "camera_vdig_1p2";
++		regulator-min-microvolt = <1200000>;
++		regulator-max-microvolt = <1200000>;
++		vin-supply = <&vreg_s8c_1p2>;
++		regulator-always-on;
++	};
++
++	/* WCD9385: split codec on Bolero, SoundWire RX/TX slaves on swr1/swr2.
++	 * Values from lito-audio-overlay.dtsi:177-222, picasso-audio-overlay.dtsi
++	 * (:129-135 micbias 2.75 V, :58-59 jack switches).  Reset is active low
++	 * on WEST-tile gpio57 and is pulsed by picasso-pinmux, because gpiod
++	 * writes never reach that tile. */
++	wcd9385: audio-codec {
++		compatible = "qcom,wcd9385-codec";
++
++		reset-gpios = <&tlmm 57 GPIO_ACTIVE_LOW>;
++
++		vdd-buck-supply = <&vreg_s4a_1p8>;
++		vdd-rxtx-supply = <&vreg_s4a_1p8>;
++		vdd-io-supply = <&vreg_s4a_1p8>;
++		vdd-mic-bias-supply = <&vreg_bob>;
++
++		qcom,micbias1-microvolt = <2750000>;
++		qcom,micbias2-microvolt = <2750000>;
++		qcom,micbias3-microvolt = <2750000>;
++		qcom,micbias4-microvolt = <2750000>;
++
++		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
++		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
++		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
++		qcom,hphl-jack-type-normally-closed;
++		qcom,ground-jack-type-normally-closed;
++
++		qcom,rx-device = <&wcd_rx>;
++		qcom,tx-device = <&wcd_tx>;
++
++		#sound-dai-cells = <1>;
++	};
++};
++
++&cci0 {
++	status = "okay";
++};
++
++&cci1 {
++	status = "okay";
++};
++
++/* PM8008 presence probe on the charger bus (qupv3_se9, i2c@98c000) */
++&i2c9 {
++	status = "okay";
++};
++
++/*
++ * ---- LPASS capture macros, SoundWire masters, LPI pinmux ----------------
++ *
++ * Addresses/IRQs from the vendor lito-audio-overlay.dtsi (macros at
++ * 0x3200000/0x3220000/0x3370000, swr1 IRQ 155, swr2 IRQ 166, LPI at
++ * 0x33c0000), node shape and SWR port tables from sm8250.dtsi.  slimbus and
++ * the WSA macro are not used on this board.
++ */
++&soc {
++	vamacro: codec@3370000 {
++		compatible = "qcom,sm8250-lpass-va-macro";
++		reg = <0 0x03370000 0 0x1000>;
++		clocks = <&q6afecc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
++		clock-names = "mclk", "macro", "dcodec";
++		clock-output-names = "fsgen";
++		#clock-cells = <0>;
++		#sound-dai-cells = <1>;
++		qcom,dmic-sample-rate = <600000>;
++		status = "okay";
++	};
++
++	rxmacro: rxmacro@3200000 {
++		compatible = "qcom,sm8250-lpass-rx-macro";
++		reg = <0 0x03200000 0 0x1000>;
++		clocks = <&q6afecc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&vamacro>;
++		clock-names = "mclk", "npl", "macro", "dcodec", "fsgen";
++		clock-output-names = "mclk";
++		#clock-cells = <0>;
++		#sound-dai-cells = <1>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&rx_swr_active>;
++		status = "okay";
++	};
++
++	txmacro: txmacro@3220000 {
++		compatible = "qcom,sm8250-lpass-tx-macro";
++		reg = <0 0x03220000 0 0x1000>;
++		clocks = <&q6afecc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&vamacro>;
++		clock-names = "mclk", "npl", "macro", "dcodec", "fsgen";
++		clock-output-names = "mclk";
++		#clock-cells = <0>;
++		#sound-dai-cells = <1>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&tx_swr_active &dmic2_active &dmic3_active>;
++		status = "okay";
++	};
++
++	swr1: soundwire@3210000 {
++		compatible = "qcom,soundwire-v1.5.1";
++		reg = <0 0x03210000 0 0x2000>;
++		interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&rxmacro>;
++		clock-names = "iface";
++		label = "RX";
++		qcom,din-ports = <0>;
++		qcom,dout-ports = <5>;
++		qcom,ports-sinterval-low =	/bits/ 8 <0x03 0x1f 0x1f 0x07 0x00>;
++		qcom,ports-offset1 =		/bits/ 8 <0x00 0x00 0x0b 0x01 0x00>;
++		qcom,ports-offset2 =		/bits/ 8 <0x00 0x00 0x0b 0x00 0x00>;
++		qcom,ports-hstart =		/bits/ 8 <0xff 0x03 0xff 0xff 0xff>;
++		qcom,ports-hstop =		/bits/ 8 <0xff 0x06 0xff 0xff 0xff>;
++		qcom,ports-word-length =	/bits/ 8 <0x01 0x07 0x04 0xff 0xff>;
++		qcom,ports-block-pack-mode =	/bits/ 8 <0xff 0x00 0x01 0xff 0xff>;
++		qcom,ports-lane-control =	/bits/ 8 <0x01 0x00 0x00 0x00 0x00>;
++		qcom,ports-block-group-count =	/bits/ 8 <0xff 0xff 0xff 0xff 0x00>;
++		#sound-dai-cells = <1>;
++		#address-cells = <2>;
++		#size-cells = <0>;
++		status = "okay";
++
++		wcd_rx: codec@0,4 {
++			compatible = "sdw20217010d00";
++			reg = <0 4>;
++			qcom,rx-port-mapping = <1 2 3 4 5>;
++		};
++	};
++
++	swr2: soundwire@3230000 {
++		compatible = "qcom,soundwire-v1.5.1";
++		reg = <0 0x03230000 0 0x2000>;
++		interrupts = <GIC_SPI 166 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&txmacro>;
++		clock-names = "iface";
++		label = "TX";
++		qcom,din-ports = <5>;
++		qcom,dout-ports = <0>;
++		qcom,ports-sinterval-low =	/bits/ 8 <0xff 0x01 0x01 0x03 0x03>;
++		qcom,ports-offset1 =		/bits/ 8 <0xff 0x01 0x00 0x02 0x00>;
++		qcom,ports-offset2 =		/bits/ 8 <0xff 0x00 0x00 0x00 0x00>;
++		qcom,ports-block-pack-mode =	/bits/ 8 <0xff 0xff 0xff 0xff 0xff>;
++		qcom,ports-hstart =		/bits/ 8 <0xff 0xff 0xff 0xff 0xff>;
++		qcom,ports-hstop =		/bits/ 8 <0xff 0xff 0xff 0xff 0xff>;
++		qcom,ports-word-length =	/bits/ 8 <0xff 0xff 0xff 0xff 0xff>;
++		qcom,ports-block-group-count =	/bits/ 8 <0xff 0xff 0xff 0xff 0xff>;
++		qcom,ports-lane-control =	/bits/ 8 <0xff 0x00 0x01 0x00 0x01>;
++		#sound-dai-cells = <1>;
++		#address-cells = <2>;
++		#size-cells = <0>;
++		status = "okay";
++
++		wcd_tx: codec@0,3 {
++			compatible = "sdw20217010d00";
++			reg = <0 3>;
++			qcom,tx-port-mapping = <2 3 4 5>;
++		};
++	};
++
++	lpass_tlmm: pinctrl@33c0000 {
++		compatible = "qcom,sm8250-lpass-lpi-pinctrl";
++		reg = <0 0x033c0000 0 0x20000>,
++		      <0 0x03550000 0 0x10000>;
++		gpio-controller;
++		#gpio-cells = <2>;
++		gpio-ranges = <&lpass_tlmm 0 0 14>;
++		clocks = <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++			 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
++		clock-names = "core", "audio";
++
++		tx_swr_active: tx-swr-active-state {
++			clk-pins {
++				pins = "gpio0";
++				function = "swr_tx_clk";
++				drive-strength = <2>;
++				slew-rate = <1>;
++				bias-disable;
++			};
++			data-pins {
++				pins = "gpio1", "gpio2";
++				function = "swr_tx_data";
++				drive-strength = <2>;
++				slew-rate = <1>;
++				bias-bus-hold;
++			};
++		};
++
++		rx_swr_active: rx-swr-active-state {
++			clk-pins {
++				pins = "gpio3";
++				function = "swr_rx_clk";
++				drive-strength = <2>;
++				slew-rate = <1>;
++				bias-disable;
++			};
++			data-pins {
++				pins = "gpio4", "gpio5";
++				function = "swr_rx_data";
++				drive-strength = <2>;
++				slew-rate = <1>;
++				bias-bus-hold;
++			};
++		};
++
++		/* vendor cdc-dmic23 (gpio8 clk, gpio9 data) */
++		dmic2_active: dmic2-active-state {
++			clk-pins {
++				pins = "gpio8";
++				function = "dmic2_clk";
++				drive-strength = <8>;
++				output-high;
++			};
++			data-pins {
++				pins = "gpio9";
++				function = "dmic2_data";
++				drive-strength = <8>;
++				bias-pull-down;
++			};
++		};
++
++		/* vendor cdc-dmic45 (gpio12 clk, gpio13 data) */
++		dmic3_active: dmic3-active-state {
++			clk-pins {
++				pins = "gpio12";
++				function = "dmic3_clk";
++				drive-strength = <8>;
++				output-high;
++			};
++			data-pins {
++				pins = "gpio13";
++				function = "dmic3_data";
++				drive-strength = <8>;
++				bias-pull-down;
++			};
++		};
++	};
++};
++
++/*
++ * ---- Cellular data path: IPA v4.7 --------------------------------------
++ *
++ * AP<->modem IP data path.  There is no ipa_fws image on this device: the
++ * modem performs the GSI firmware load and signals completion over the "ipa"
++ * SMP2P entry, hence qcom,gsi-loader = "modem" (the binding requires a
++ * memory-region only for "self").  Register block: 0x1e00000 + the IPAv4.7
++ * reg-base offset 0x40000; local SRAM at +0x10000; GSI at 0x1e04000.
++ *
++ * The first bring-up uses the qcom,sm6350-ipa compatible alone: ipa_main.c
++ * maps it to ipa_data_v4_7, so no driver/binding patch is needed yet.
++ */
++&soc {
++	ipa: ipa@1e40000 {
++		compatible = "qcom,sm6350-ipa";
++
++		reg = <0x0 0x01e40000 0x0 0x8000>,
++		      <0x0 0x01e50000 0x0 0x3000>,
++		      <0x0 0x01e04000 0x0 0x23000>;
++		reg-names = "ipa-reg", "ipa-shared", "gsi";
++
++		interrupts-extended = <&intc GIC_SPI 311 IRQ_TYPE_LEVEL_HIGH>,
++				      <&intc GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>,
++				      <&ipa_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
++				      <&ipa_smp2p_in 1 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "ipa", "gsi",
++				  "ipa-clock-query", "ipa-setup-ready";
++
++		iommus = <&apps_smmu 0x520 0x0>,
++			 <&apps_smmu 0x522 0x0>;
++
++		clocks = <&rpmhcc RPMH_IPA_CLK>;
++		clock-names = "core";
++
++		interconnects = <&aggre2_noc MASTER_IPA QCOM_ICC_TAG_ALWAYS
++				 &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ALWAYS>,
++				<&aggre2_noc MASTER_IPA QCOM_ICC_TAG_ALWAYS
++				 &system_noc SLAVE_OCIMEM QCOM_ICC_TAG_ALWAYS>,
++				<&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY
++				 &config_noc SLAVE_IPA_CFG QCOM_ICC_TAG_ACTIVE_ONLY>;
++		interconnect-names = "memory", "imem", "config";
++
++		qcom,qmp = <&aoss_qmp>;
++		qcom,smem-states = <&ipa_smp2p_out 0>,
++				   <&ipa_smp2p_out 1>;
++		qcom,smem-state-names = "ipa-clock-enabled-valid",
++					"ipa-clock-enabled";
++		qcom,gsi-loader = "modem";
++
++		status = "okay";
++	};
++};
++
++/*
++ * ---- Health regressions: notification LED and Type-C/PD -----------------
++ */
++
++/*
++ * Notification LED: PM8150L TRILED, channel 2 is the only populated emitter.
++ * Downstream (vendor/qcom/picasso-sm7250.dtsi:628-640) disables red and green
++ * and relabels blue as "white", so expose exactly that one channel.
++ */
++&pm8150l_lpg {
++	status = "okay";
++
++	led@2 {
++		reg = <2>;
++		color = <LED_COLOR_ID_BLUE>;
++		function = LED_FUNCTION_INDICATOR;
++		default-state = "off";
++	};
++};
++
++/* Type-C: PM7250B port + PD PHY. PD PHY VDD is PM8150 LDO2 (3.072 V), exactly
++ * as the vendor lito overlay wires it (lito-pmic-overlay.dtsi:451-455). PD is
++ * left disabled so the current peripheral-mode USB gadget keeps working. */
++&pm7250b_vbus {
++	status = "okay";
++};
++
++&pm7250b_typec {
++	vdd-pdphy-supply = <&vreg_l2a_3p1>;
++	status = "okay";
++
++	connector {
++		compatible = "usb-c-connector";
++
++		power-role = "dual";
++		data-role = "dual";
++		self-powered;
++		typec-power-opmode = "default";
++		pd-disable;
++
++		vbus-supply = <&pm7250b_vbus>;
 +	};
 +};

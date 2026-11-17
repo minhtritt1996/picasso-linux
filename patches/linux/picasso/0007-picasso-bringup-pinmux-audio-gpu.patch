@@ -9,10 +9,10 @@ index 798643be3..8ccb9f5ab 100644
 +obj-y += picasso-pinmux.o
 diff --git a/drivers/soc/qcom/picasso-pinmux.c b/drivers/soc/qcom/picasso-pinmux.c
 new file mode 100644
-index 000000000..148143436
+index 000000000..bf3502a53
 --- /dev/null
 +++ b/drivers/soc/qcom/picasso-pinmux.c
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,156 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Early pinmux for the Xiaomi Redmi K30 5G (picasso, SM7250).
@@ -137,6 +137,26 @@ index 000000000..148143436
 +	/* TFA9874 reset: GPIO58, active high per the vendor driver
 +	 * (GPIOF_OUT_INIT_LOW idle, 1 -> 0 to reset), so idle is low */
 +	picasso_mux(58, TLMM_TILE_WEST, 0, 2, 0, true, 0);
++
++	/* NFC: QUPv3_0 SE0 pads (qup00 = function 1, 2 mA, no bias) */
++	picasso_mux(42, TLMM_TILE_EAST, 1, 2, 0, false, 0);	/* SDA */
++	picasso_mux(43, TLMM_TILE_EAST, 1, 2, 0, false, 0);	/* SCL */
++	/* NFC control pads: VEN high (HPD), FIRM low (NCI mode), CLKREQ and
++	 * IRQ as pulled-up inputs.  The gpiod requests from nxp-nci are no-ops
++	 * through pinctrl-msm, so the level set here is what the chip sees. */
++	picasso_mux(12, TLMM_TILE_EAST, 0, 2, 3, true, 1);	/* VEN */
++	picasso_mux(35, TLMM_TILE_EAST, 0, 2, 3, true, 0);	/* FIRM */
++	picasso_mux(31, TLMM_TILE_EAST, 0, 2, 3, false, 0);	/* CLKREQ */
++	picasso_mux(34, TLMM_TILE_EAST, 0, 2, 3, false, 0);	/* IRQ */
++
++	/* WCD9385 reset: GPIO57, active low. The codec needs a low pulse after
++	 * power-up; gpiod writes never reach the WEST tile through pinctrl-msm,
++	 * so the pulse is produced here. */
++	picasso_mux(57, TLMM_TILE_WEST, 0, 2, 0, true, 0);
++	if (do_write) {
++		mdelay(1);
++		picasso_mux(57, TLMM_TILE_WEST, 0, 2, 0, true, 1);
++	}
 +
 +	/* let the touch controller come out of reset and boot its firmware */
 +	if (do_write) {

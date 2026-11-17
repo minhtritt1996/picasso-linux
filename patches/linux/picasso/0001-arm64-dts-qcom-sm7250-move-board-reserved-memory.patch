@@ -153,7 +153,7 @@ index 0cdad894d..e1a85c818 100644
  		 * Downstream: 0xcbe00000 + 0x400000 including a 0x1000
  		 * OnePlus-only devinfo zone at the end. Mainline has no such
 diff --git a/arch/arm64/boot/dts/qcom/sm7250.dtsi b/arch/arm64/boot/dts/qcom/sm7250.dtsi
-index e2279ea4a..52635044b 100644
+index e2279ea4a..5dd11cd1e 100644
 --- a/arch/arm64/boot/dts/qcom/sm7250.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm7250.dtsi
 @@ -433,151 +433,6 @@ cluster_pd: power-domain-cpu-cluster0 {
@@ -308,7 +308,25 @@ index e2279ea4a..52635044b 100644
  	smp2p-adsp {
  		compatible = "qcom,smp2p";
  		qcom,smem = <443>, <429>;
-@@ -799,19 +654,14 @@ &qup_virt SLAVE_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS>,
+@@ -651,6 +506,17 @@ modem_smp2p_in: slave-kernel {
+ 			interrupt-controller;
+ 			#interrupt-cells = <2>;
+ 		};
++
++		ipa_smp2p_out: ipa-ap-to-modem {
++			qcom,entry-name = "ipa";
++			#qcom,smem-state-cells = <1>;
++		};
++
++		ipa_smp2p_in: ipa-modem-to-ap {
++			qcom,entry-name = "ipa";
++			interrupt-controller;
++			#interrupt-cells = <2>;
++		};
+ 	};
+ 
+ 	soc: soc@0 {
+@@ -799,19 +665,14 @@ &qup_virt SLAVE_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS>,
  				status = "disabled";
  			};
  

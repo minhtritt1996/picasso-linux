@@ -79,3 +79,63 @@ BOOT_RDY=0x3f10d; ILM/DLM destination=0x3f128/0x3f12c;
 length=0x3f118/0x3f130 (three bytes); golden CRC=0x3f100/0x3f104;
 CRC enable=0x3f30e (bit 7). Event reset/host-command offsets=0x60/0x50.
 These are controller SRAM/register accesses, with no persistent flash program.
+
+## Haptics / vibrator (M4)
+
+| Hạng mục | Downstream | Giá trị |
+|---|---|---|
+| bus / slave | `pm7250b.dtsi:450-452`, board `PM7250B_SID1=3` | SPMI SID 3 |
+| node | `pm7250b.dtsi:457-460` | `qcom,vibrator@5300`, `qcom,qpnp-vibrator-ldo`, `reg = <0x5300 0x100>` |
+| voltage / overdrive | same | `qcom,vib-ldo-volt-uv = <3000000>`, `qcom,disable-overdrive` |
+| registers | `leds-qpnp-vibrator-ldo.c:18-29` | STATUS1 0x08 bit7 VREG_READY; VSET_LB 0x40 (12-bit mV, 8 mV step, 1504–3544 mV); EN_CTL 0x46 bit7 |
+| mainline driver | `drivers/input/misc/pm8xxx-vibrator.c` (`pmi632_regs`) | same registers; DT `compatible = "qcom,pm7250b-vib", "qcom,pmi632-vib"` |
+| userland | `70-hapticd-builtin.rules` | input device with FF caps, bustype ≠ 0003/0005/0006 → `HAPTICD_DEVICE=1` |
+
+## NFC (NXP NCI, M4)
+
+| Hạng mục | Downstream | Giá trị |
+|---|---|---|
+| bus | `xiaomi-sm7250-common.dtsi:322-324` | `qupv3_se0_i2c` = `lito-qupv3.dtsi:83` `i2c@880000`, vendor 1 MHz (mainline 400 kHz) |
+| client | `xiaomi-sm7250-common.dtsi:327-329` | `nq@28`, address `0x28`, `qcom,nq-nci` |
+| IRQ | `:330,334-336`; `nq-nci.c:1606` | tlmm 34, vendor requests level-high |
+| control pads | `:331-333` | `qcom,nq-ven` tlmm 12 (active high), `qcom,nq-firm` tlmm 35, `qcom,nq-clkreq` tlmm 31 |
+| pads tile | `lito-pinctrl.dtsi:1159-1260`, `pinctrl-lito.c` | SDA/SCL gpio42/43 (qup00, EAST); VEN/CLKREQ/IRQ/FIRM EAST |
+| regulators / clock / firmware | — | absent in downstream (always-on, ROM NCI firmware) |
+| mainline driver | `drivers/nfc/nxp-nci/i2c.c` | `nxp,nxp-nci-i2c`, needs `enable-gpios` + `interrupts` |
+| pinmux workaround | `drivers/soc/qcom/picasso-pinmux.c` | mux 42/43 (qup00), VEN high, FIRM low, CLKREQ/IRQ pulled-up inputs |
+
+## Audio capture (WCD9385 + Bolero TX/DMIC, M4)
+
+| Hạng mục | Downstream | Giá trị |
+|---|---|---|
+| codec | `lito-audio-overlay.dtsi:177-222`, `picasso-audio-overlay.dtsi:23` | WCD9385 split codec, `qcom,split-codec = <1>` |
+| codec reset | `lito-pinctrl.dtsi:640-666`, `lito-audio-overlay.dtsi:413-418` | tlmm 57 WEST, active low |
+| supplies | `lito-audio-overlay.dtsi:197-211`, `lito-regulators.dtsi:775-791` | rxtx/io/buck = S4A 1.8 V, mic-bias = BOB (3.008–3.96 V) |
+| micbias | `picasso-audio-overlay.dtsi:129-135` | 2.75 V on all four |
+| analog mics | `picasso-audio-overlay.dtsi:22-29` | AMIC1←BIAS1 handset, AMIC2←BIAS2 headset, AMIC5←BIAS3 secondary |
+| macros | `picasso-audio-overlay.dtsi:91-93` | 3 macros (RX/TX/VA), WSA disabled |
+| rx macro / swr1 | `lito-audio-overlay.dtsi:66-101` | `rx-macro@3200000`, `swrm-io-base 0x3210000`, master 2, IRQ GIC_SPI 155, slave `0x01170224` |
+| tx macro / swr2 | `lito-audio-overlay.dtsi:24-62` | `tx-macro@3220000`, `swrm-io-base 0x3230000`, master 3, IRQ GIC_SPI 166, slave `0x01170223`, dmic rate 2.4 MHz |
+| VA macro | `lito-audio-overlay.dtsi:166-175` | `va-macro@3370000`, dmic rate 600 kHz |
+| SWR port maps | `lito-audio-overlay.dtsi:49-55` | PWM_OUT1/ADC1-4/DMIC0-7 → integers (reused verbatim) |
+| LPI pinctrl | `lito-lpi.dtsi:1-29`, `:1351-1545` | `lpi_pinctrl@33c0000`, slew `0x355a000`; TX clk gpio0 data1/2 gpio1/2; RX clk gpio3 data gpio4/5 |
+| DMIC pads | vendor `cdc-dmic23/45` | gpio8/9 (dmic2), gpio12/13 (dmic3), drive 8 mA |
+| card | mainline `sm8250.c` + `q6asm-dai` | MM2 = capture FE (`Q6ASM_DAI_TX`), BE `TX_CODEC_DMA_TX_3` |
+
+## Camera (M4, stage 1/2)
+
+| Hạng mục | Downstream | Giá trị |
+|---|---|---|
+| CCI | mainline `sm7250.dtsi` `cci@ac4a000`/`ac4b000` (disabled by default) | enable both; adapters appear as `Qualcomm-CCI` |
+| sensors | `picasso-sm7250-camera-sensor-mtp.dtsi` | IMX686 64 MP main, OV8856 8 MP UW, S5K3T2 20 MP front, S5K5E9YX04 5 MP macro, GC02M1 ×2 depth |
+| mainline sensor drivers | `build/linux/drivers/media/i2c/` | only OV8856 present; IMX686/S5K3T2/S5K5E9/GC02M1 need drivers |
+| PM8008 | `picasso-sm7250.dtsi:977` | instantiated on charger bus `0x98c000` addr 0x08; **not** in the camera rails |
+| rails | `lito-regulators.dtsi:55,414,554,775` | VIO = S5A, VDIG = S8C, VANA = BOB, VAF = L16A; enable pads on EAST/WEST tiles |
+| camcc | mainline `sm7250.dtsi:1079` | already enabled; provides TITAN_TOP_GDSC |
+
+## GNSS / hotspot
+
+| Hạng mục | Downstream | Giá trị |
+|---|---|---|
+| GNSS | none in vendor DTS; `image/modemr.jsn` `{"provider":"gps","service":"gps_service"}` | engine is a PD of the modem image; reached only via QMI LOC (service 16) |
+| WLAN AP | `lito.dtsi:3635-3667` | WCN3990 nodes already complete in mainline; AP mode + same-channel concurrency advertised by the firmware |
