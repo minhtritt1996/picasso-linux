@@ -1,8 +1,28 @@
 diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
-index c7485c9b0..66790602c 100644
+index c7485c9b0..002d8431c 100644
 --- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
 +++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
-@@ -1870,13 +1870,15 @@ static int a6xx_gmu_rpmh_votes_init(struct a6xx_gmu *gmu)
+@@ -1815,15 +1815,17 @@ static int a6xx_gmu_rpmh_dep_votes_init(struct device *dev, u32 *votes,
+ 		unsigned int level = a6xx_gmu_get_arc_level(dev, freqs[i]);
+ 		u8 j, index = 0;
+ 
+-		/* Get the primary index that matches the arc level */
++		/* Get the primary index that matches the arc level; clamp to max non-zero */
+ 		for (j = 0; j < count; j++) {
+ 			if (mx[j] >= level) {
+ 				index = j;
+ 				break;
++			} else if (mx[j]) {
++				index = j;
+ 			}
+ 		}
+ 
+-		if (j == count) {
++		if (j == count && !index) {
+ 			DRM_DEV_ERROR(dev,
+ 				      "Mx Level %u not found in the RPMh list\n",
+ 				      level);
+@@ -1870,13 +1872,15 @@ static int a6xx_gmu_rpmh_votes_init(struct a6xx_gmu *gmu)
  	ret = a6xx_gmu_rpmh_arc_votes_init(&gpu->pdev->dev, gmu->gx_arc_votes,
  		gmu->gpu_freqs, gmu->nr_gpu_freqs, "gfx.lvl", sec_id);
  

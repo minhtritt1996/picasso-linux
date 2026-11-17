@@ -299,17 +299,35 @@ as the modem.
 | log persistence | `get_staged` shows `== previous kernel console ==` after reset |
 | UFS | `ufshcd-qcom 1d84000.ufshc` probe 0; 6 LUNs, GPT partitions scanned (`sda1..sda35`, `sde1..sde62`) |
 | userdata | mounted **read-only**: `sda34` found by PARTNAME, `mount (f2fs, ro)`; klog: `userdata /dev/sda34 mounted read-only` |
-| display | MDSS/DPU 6.1.0 (`dpu hardware revision:0x60010000`), DSI + 7nm PHY, panel `panel-xiaomi-g7a` bound; `msmdrmfb` fb0 registered on minor 1 |
+| display | MDSS/DPU 6.1.0 (`dpu hardware revision:0x60010000`), DSI + 7nm PHY, panel `panel-xiaomi-g7a` bound (`1080x2400@120`, `334660` kHz, `drm_mode_set_name` in `0006*`); `crtc[73]` active at 120Hz |
+| Denial Mobile rootfs | `sda36` (`PARTNAME=linux`, 20 GiB ext4) mounted r/w, resized, systemd PID 1 |
+| Console hand-over | `/dev/ttyACM1` (or ACM0) interactive shell enters `/denial` on UFS (`console: inside the system on UFS`) |
+| USB ECM networking | host `enx020000000001` DHCP lease `10.77.71.1/30`, ping to `10.77.71.2` 0.29 ms |
+| SSH server | `sshd.service` active on `0.0.0.0:22` (`/run/11-phone-usb.conf` bind-mounted), reachable via USB (`10.77.71.2`) and Wi-Fi (`<lan-ip>`), passwordless root & `picasso` user key login verified |
+| ADSP sensor PD | `hexagonrpcd-stock-sensors` maps vendor/odm/persist via DM, `hexagonrpcd` active, no ADSP watchdog reset (>11 min uptime) |
+| Graphics / Wayland | `deniald` (`--device /dev/dri/card1`), `phonewave-droidloom.service` (`uid=1000` `picasso`) on `/dev/dri/renderD128` (Mesa), `1080x2400` XR30 (`pitch[0]=4352`) with **ZERO GPU faults** (`enabled=enabled`, `dpms: On`), `HandlePowerKey=ignore` |
+| GPU (Adreno 620) | Real Gen3 `prebuilt/fw-gpu/a650_sqe.fw` (`7db957e3...`, 31804 B) + `a650_gmu.bin` + `a620_zap.mbn`; zero `gpu fault` / `hangcheck` / `recover` |
+| Touch (`NVTCapacitiveTouchScreen`) | `novatek/novatek_nt36672c_g7a_fw03.bin` (`prebuilt/fw-touch/`) packed into initramfs and bound into `/newroot`; `fw reset state 0xa0`, `1080x2400` active on `input2`/`event2` |
+| System upgrades | `pacman -Syu` synced `core`/`extra`/`alarm`/`aur`/`denial`/`denial-phone`/`droidloom` via `ssh -R 1080` proxy (`droidloom-image` & `droidloom-runtime` upgraded to 0.1.0-42) |
+| Sensors (`steinerd`) | `steinerd.service` active via `hexagonrpcd`: `tsl2560` (ALS), `bmi26x` (accel/gyro), `gyro_cal`, `Rotation Vector` |
+| Backlight (`wled`) | `pm8150l_wled` enabled in DT (`0002*`) with downstream values (`enabled-strings <0 1 2>`, `ovp-millivolt <28000>`, `current-limit-microamp <22500>`) + `0012-backlight-qcom-wled-balance-ovp-irq.patch`; DPMS toggles `d846` (`0x80` ON ↔ `0x00` OFF) with zero OVP IRQ warnings |
+| Bluetooth (`hci0`) | `wcn3991-bt` downloads `qca/crbtfw32.tlv` & `crnv32.bin` (`BTFM.CHE.3.2.1-00174-QCACHROMZ-1.372365.1`); `btmgmt info` powered & ready |
+| Audio (PipeWire/UCM2) | `/run/alsa-ucm2` drop-in (`Picasso-HiFi.conf`, `Speaker` 100%), WirePlumber `/run/wireplumber/wireplumber.conf.d/50-picasso-alsa.conf` forces `S16_LE` 48kHz 2ch; `pw-play` opens `card 0` in `S16_LE` |
+| Modem / TFTP (`tqftpserv`) | `remoteproc1` (`modem`) running (`[45.719562] remote processor modem is now up`), `tqftpserv` & `pd-mapper` retain `/sys` via `MS_BIND \| MS_REC` with zero `ENOENT` rejections (>86s uptime) |
+| Wi-Fi (`wlan0` / `ath10k_snoc`) | `wcn3990 hw1.0` (`18800000.wifi`) probes cleanly on boot with QRTR `announce_servers()` `-EAGAIN` retry (`0011*`), zero `dog_hal` errors, `wlan0` UP, `nmcli` scans 2.4 GHz & 5 GHz WPA2 networks |
+| Video decode (`qcom-venus`) | **WORKING** (`0014*`): `ffmpeg -c:v h264_v4l2m2m` decodes `60 frames` (320x240) in `0.08s` (`RC=0`) and `300 frames` (1280x720) in `0.63s` (`speed=15.9x`, ~476 fps, `RC=0`) with zero `dmesg` errors |
+| Droidloom (Android container) | `droidloomd.service` + user `droidloom.service` **WORKING**: full Android cell booted (`renderD128`, `/dev/dma_heap/*`); TikTok (`com.ss.android.ugc.trill`) installed with desktop launcher |
+| Battery (`pm7250b-battery`) | **WORKING**: `0015*` with `0x8000` sentinel fallback (`0x48c0`/`0x48c2`); `VOLTAGE_NOW=4363372` (`4.363 V`), `CURRENT_NOW=126495` (`+126 mA`), `CAPACITY=97%`, `upower -d` `charging` (`0.809 W`) |
 
 ## Bring-up matrix (2026-11-14, measured on hardware)
 
 | Subsystem | Evidence today | Remaining |
 |---|---|---|
-| GPU | `arm-smmu 3da0000` probes, `adreno 3d00000.gpu` binds, GMU present, `a650_sqe.fw`/`a650_gmu.bin`/`a620_zap.mbn` load, **`/dev/dri/renderD128` exists** | userspace acceleration (Mesa/freedreno) + a render smoke test |
-| Audio | card `XiaomiRedmiK305` (snd-sm8250), TFA9874 binds (`0-0034` on i2c0), ADSP PAS running, APR q6core/q6afe/q6asm/q6adm probe, PDR audio_pd up | PCM open returns EINVAL before `soc_pcm_open`/`q6asm_dai_open` (both instrumented, never called) - DPCM FE path; ADSP user-PD DOG every ~44 s |
-| Bluetooth | chip answers Product 0x0a / SOC 0x40010320 / ROM 0x0302 / patch 0x0de9 with `qcom,wcn3991-bt`; firmware from `/lib/firmware/qca` with `firmware-name = nvm, rampatch` | rampatch TLV send times out (`0xfc00`); one 0xFD frame-reassembly error per setup |
-| Wi-Fi | modem PAS boots, rmtfs serves EFS, pd-mapper answers domain lists (node 1 = modem), ADSP up | modem watchdog DOG at ~45 s then `can't start rproc modem: -110`; no wlan0 |
-| Display | DSI timing/DSC correct, DPU busy, PLL set_rate 600 MHz + 801.88 MHz, colour-quadrant test painted into fb0 | one human look: four coloured quadrants / white / logo |
+| GPU | **WORKING**: `3d00000.gpu` (`0x06020000`) runs with real Gen3 `a650_sqe.fw` (`7db957e3...`) + `a650_gmu.bin` + `a620_zap.mbn`; `deniald` renders `1080x2400` `XR30` on `card1-DSI-1` with **ZERO GPU faults** (verified 2026-11-17) | — |
+| Audio | card `XiaomiRedmiK305` (snd-sm8250), TFA9874 binds (`0-0034` on i2c0), ADSP PAS running, PipeWire default sink `Built-in Audio Speaker` via `/run/alsa-ucm2` drop-in, `pw-play --raw` works (verified 2026-11-17) | ADSP sensor-PD watchdog resets eliminated via `hexagonrpcd` stock sensors |
+| Bluetooth | **WORKING**: `wcn3991-bt` on `ttyHS1` loads `qca/crbtfw32.tlv` & `crnv32.bin` (`BTFM.CHE.3.2.1-00174-QCACHROMZ-1.372365.1`); `hci0` powered in `btmgmt info` (verified 2026-11-17) | — |
+| Wi-Fi | **WORKING**: `ath10k_snoc` (`18800000.wifi`, `wcn3990 hw1.0`) creates `wlan0` (`phy#1`) automatically on boot and scans 2.4 GHz & 5 GHz WPA2 networks via `nmcli` (verified 2026-11-17) | — |
+| Display | **WORKING**: `panel-xiaomi-g7a` (`1080x2400@120`, `334660` kHz, `drm_mode_set_name` in `0006*`), `crtc[73]` active at 120Hz, WLED backlight ON (`d846: 80`), `deniald` rendering `XR30` (verified 2026-11-17) | — |
 
 Iteration aids: `bootcpu=1` makes the loader watch the kernel from core 0 and
 return to fastboot on its own (~48 s) while the kernel keeps running, so
@@ -1866,14 +1884,11 @@ Written and verified (owner approved the UFS write):
   `persist` - exactly the "read the stock partitions, keep the rootfs clean"
   model, no firmware baked into the image.
 
-Open problem, measured: with **ECM present**, the hand-over leaves the phone
-unreachable (no ACM, no ECM, panel black) - both when ECM is created in the
-ramdisk before `switch_root` and on the retries. With **ACM only** the same
-hand-over keeps the console alive and the image boots. Next step is therefore to
-create ECM from the image's own userspace (a `/run/systemd/system`
-unit that unbinds the UDC, adds `ecm.usb0`, rebinds and brings `usb0` up) and
-leave the ramdisk gadget ACM-only when switching; the rebind path must be tested
-with the console present.
+Open problem, measured (RESOLVED in subsequent milestone below): with **ECM present**,
+early hand-over attempts left the phone unreachable due to invalid gadget link order
+in configfs (`config_usb_cfg_link` returning `-EINVAL` when UDC is bound). This was
+fixed by unbinding UDC prior to linking `ecm.usb0`, rebinding, and configuring the
+link in userspace drop-ins.
 
 Also fixed in this pass, all verified by rebuilding:
 
@@ -1885,3 +1900,433 @@ Also fixed in this pass, all verified by rebuilding:
   pads keep the bootloader's mux and touch reads 0x00 - the mode param was a trap.
 - `tools/tone/tone.c` takes a channel count (`tone <dev> <channels>`); four
   channels on the two SD lines is what proved the amp's frame.
+
+## Denial Mobile: boot hand-over, ECM networking, SSH, and sensor PD WORKS on hardware (verified 2026-11-17)
+
+All boot hand-over, networking, shell, and daemon hand-over components verified on hardware:
+serial console on `/dev/ttyACM1` (or `/dev/ttyACM0`) stays alive and enters Denial rootfs on UFS,
+USB ECM networking brings up `10.77.71.2/30`, passwordless root SSH functions, and
+`hexagonrpcd-stock-sensors` + `hexagonrpcd` successfully eliminates the ADSP sensor-PD watchdog resets.
+
+### 1. Verified Artifacts & Hashes
+- Kernel Image (`build/out/Image`): `687f6088b6c6070999312c0a03793296483eb356296d1d1a73f3bb6804061eb8`
+- Initramfs (`build/out/initrd.cpio.gz`): `932426193fd61d23644634462abb3267ba51e7c8b0bc16ab5d7c1bfdb0851d95`
+- DTB (`build/out/sm7250-xiaomi-picasso.dtb`): `6d90cbb0b60477f05d7b797351f9783254f2638cd6811e14706f0bc0d3024762`
+- Boot image (`build/out/boot-linux.img`): `62bdb7b476617b4d86dc78f797b97baff8196fcc1c2af9a79297bcfcdd3fd41a`
+- Payload (`build/out/payload-linux.bin`): `9fca765f8996cd54efa1f4d5997770702760fa3d583bb8985485ee9e6ff285d0`
+
+### 2. Kernel Command Line
+```text
+console=tty0 loglevel=7 selinux=0 picasso_pinmux.mode=write rdinit=/init systemd.show_status=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10
+```
+
+### 3. Root Cause Analysis & Fixes Implemented
+
+1. **Console child root hand-over (`tools/init.c`)**:
+   - *Bug*: In `console_enter_new_root()`, the guard `if (console_switched || root_dfd < 0) return;` prevented the child from ever entering the new root. The child is `fork()`ed before PID 1 resolves `/newroot` (`root_dfd = -1`), so the child exited early without executing `chdir("/denial")` and `chroot(".")`. Furthermore, PID 1 moved `/dev` (`MS_MOVE`), leaving the ramdisk `/dev` empty and preventing `/dev/ttyGS0` reopen on hangup.
+   - *Fix*: Guard changed to `if (console_switched) return;`. Child opens `/denial/picasso-init.log` directly (resolving `-1` `root_dfd` in child), chroots to `/denial`, and reopens root `/picasso-init.log`. In `switch_to_partition()`, PID 1 recursively bind-mounts `/newroot` to `/denial` (`MS_BIND | MS_REC`) so the child retains access to `/dev`, `/proc`, `/sys`, and `/run`.
+   - *Fix*: In `console_loop()`, the inner poll loop now polls both `/dev/ttyGS0` (`p[0]`) and `switch_pipe[0]` (`p[1]`). When PID 1 signals the hand-over, `switch_pipe[0]` is drained and closed, immediately triggering `console_enter_new_root()` and printing `console: inside the system on UFS`.
+
+2. **USB Gadget ECM configuration order (`write_ecm_unit()`)**:
+   - *Bug*: In `write_ecm_unit()`, `/run/usb-ecm.sh` attempted `ln -sf "$G/functions/ecm.usb0" "$G/configs/c.1/ecm.usb0"` before unbinding the UDC (`echo "" > "$G/UDC"`). Under Linux USB gadget configfs (`drivers/usb/gadget/configfs.c:config_usb_cfg_link`), creating a configuration link while `gadget_driver.udc_name` is set returns `-EINVAL`. As a result, no `usb0` interface was ever instantiated.
+   - *Fix*: Clear `$G/UDC` first (`echo "" > "$G/UDC"`), symlink `functions/ecm.usb0` into `configs/c.1`, rebind `$UDC`, wait for interface creation, and bring `usb0` up with MAC addresses `02:00:00:00:00:02` (dev) and `02:00:00:00:00:01` (host). All actions log progress and errors to `/picasso-init.log`.
+
+3. **SSH Root Key Provisioning (`write_device_dropins()`)**:
+   - Denial Mobile's `sshd.service` enables `PermitRootLogin prohibit-password` and `PubkeyAuthentication yes` on `10.77.71.2:22`.
+   - `init.c` copies `~/.ssh/picasso_key.pub` into `/newroot/root/.ssh/authorized_keys` (mode 0600) and `/var/lib/phonewave-system/flashed/authorized_keys`. Passwordless SSH login (`ssh -i ~/.ssh/picasso_key root@10.77.71.2`) works out of the box.
+
+4. **ADSP Sensor-PD Watchdog Elimination & `stock-sensors`**:
+   - `CONFIG_BLK_DEV_DM=y` enabled in `configs/linux/picasso.config` so `dmsetup create --readonly` can map `super` partitions.
+   - Symlinks for `/dev/disk/by-partlabel/super` and `persist` pre-created in `tools/init.c`.
+   - `hexagonrpcd-stock-sensors.service` succeeds (status 0), mapping vendor/odm/persist into `/run/hexagonrpcd`.
+   - `hexagonrpcd.service` runs against `/dev/fastrpc-adsp`, completely eliminating the ~40 s ADSP sensor-PD watchdog resets.
+
+5. **Tooling & Console Port Detection**:
+   - `tools/console_cmd.py` and `tools/ramboot-cycle.sh` updated with auto-detection for `/dev/ttyACM1` / `/dev/ttyACM0` and added Denial mobile IP `10.77.71.2` reboot test.
+
+### 4. Verified Hardware Test Results on Phone
+
+- **Boot method**: Loaded via fastboot into RAM and booted with `fastboot oem run`.
+- **USB Networking**: Workstation interface `enx020000000001` received `10.77.71.1/30` via DHCP; ping to `10.77.71.2` succeeded with 0.29 ms latency.
+- **SSH Access**:
+  ```text
+  ssh -i ~/.ssh/picasso_key root@10.77.71.2 "uname -a"
+  Linux archlinux 7.3.0-rc7-00001-ge1927d6cbd57-dirty #176 SMP PREEMPT ... aarch64
+  ```
+- **System Services Status**:
+  - `hexagonrpcd-stock-sensors.service`: Active (exited cleanly with code 0).
+  - `hexagonrpcd.service`: Active and running without watchdog resets.
+  - `deniald` / `Xwayland`: Active and running on `/dev/dri/card1`.
+- **Serial Console**: Live interactive shell verified on `/dev/ttyACM1` displaying `picasso> Linux 7.3.0-rc7...` with complete `/picasso-init.log` confirming clean root hand-over and ECM configuration.
+
+### 5. Phase 2 Verification: `/picasso-init.log`, `first-user`, `pacman -Syu`, ADSP Stability, and CI Hygiene
+
+- **Exact `/picasso-init.log` from live system**:
+  ```text
+  [5.315] boot: switching to linux (/dev/sda36)
+  [5.327] boot: pipe signalled (1, ok)
+  [usb-ecm] starting at 2026-11-15T15:27:21+00:00...
+  [usb-ecm] current UDC: 'a600000.usb'
+  [usb-ecm] clearing UDC before configfs link
+  [usb-ecm] ecm linked into c.1
+  [usb-ecm] rebound UDC a600000.usb
+  [usb-ecm] usb0 up
+  [usb-ecm] done, usb0: 2: usb0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc pfifo_fast state DOWN group default qlen 1000
+      link/ether 02:00:00:00:00:02 brd ff:ff:ff:ff:ff:ff
+  [9.184] console: entering the new root (dfd -1)
+  [9.184] console: cwd on the new root, chroot
+  [9.184] console: chroot ok
+  [9.184] console: inside the system on UFS, commands follow
+  ```
+- **`first-user` & Graphical Session**:
+  - Created user `picasso` (`uid=1000`) non-interactively via `/usr/lib/phonewave-system/first-user picasso "Picasso User" "picasso" en UTC` and started session with `--start`.
+  - `denial.service`: Active (running) for `picasso(uid=1000)`.
+  - `phonewave-droidloom.service`: Finished with `0/SUCCESS`, configured for `picasso` with native rendering on Qualcomm GPU `/dev/dri/renderD128` (Mesa).
+  - Passwordless SSH for `picasso`: `ssh -i ~/.ssh/picasso_key picasso@10.77.71.2 "id"` → `uid=1000(picasso) gid=1000(picasso) groups=1000(picasso),969(gatekeeper),970(dmail),983(video),987(render),992(input),995(audio),998(wheel)`.
+- **`pacman -Syu` Full System Upgrade**:
+  - Keyring `/etc/pacman.d/gnupg/trustdb.gpg` present; routed via OpenSSH reverse SOCKS5 proxy (`ssh -R 1080`, `all_proxy=socks5h://127.0.0.1:1080`, `DisableSandbox`).
+  - Synced `core`, `extra`, `alarm`, `aur`, `denial`, `denial-phone`, `droidloom`.
+  - Upgraded `droidloom-image` (`0.1.0-36` → `0.1.0-42`) and `droidloom-runtime` (`0.1.0-36` → `0.1.0-42`), 935.03 MiB downloaded; pre/post hooks exited 0.
+- **ADSP Watchdog Stability (>11 min uptime)**:
+  - `uptime`: `15:39:07 up 11 min`; `remoteproc0` (`adsp`) and `remoteproc1` (`modem`) both `running`.
+  - `hexagonrpcd` active, serving FastRPC calls for sensors registry; zero `USER-PD DOG detects stalled initialization` messages in `dmesg`.
+- **Repository Hygiene & Final Artifact Checksums**:
+  - `./tools/policy-scan.sh`: Passed (22 code files, 42 path files).
+  - `./build.sh check`: Passed cleanly (25 patches applied to fresh upstream clone, DTB builds without error).
+  - Updated `build/out/*` SHA256 hashes:
+    - `Image`: `687f6088b6c6070999312c0a03793296483eb356296d1d1a73f3bb6804061eb8`
+    - `initrd.cpio.gz`: `bcd375c5eec837b82e409e67166d1502e1a14d139af9291bcb30e418e7caf91b`
+    - `sm7250-xiaomi-picasso.dtb`: `6d90cbb0b60477f05d7b797351f9783254f2638cd6811e14706f0bc0d3024762`
+    - `boot-linux.img`: `5ad32bdfe5196d97f80316ddb2034fe425ab7d77cdbb852561a6c5e5b3c05418`
+    - `payload-linux.bin`: `204cb01c76536ebeceed8f0c2bddfab603517caba1abefe3f4c6bebda977e189`
+
+## Repository Cleanup: Legacy Fedora/Luma Artifacts Archived (2026-11-17)
+
+Obsolete Fedora 44 and Luma bring-up files were archived into `legacy/` while keeping the canonical `AGENTS.md` layout (`patches/linux/{series,vendor,picasso}`, `patches/loader/`, `configs/linux/`, `tools/`, `build/`, `docs/`, `upstream/` read-only) intact:
+
+- `legacy/tools/` (moved from `tools/`): `fw-mount.sh`, `fw-setup.sh`, `fw-start.sh`, `log-to-ufs.sh`, `pack-rootfs.sh`, `rmtfs-seed.sh`, `rproc-coredump.sh`, `usbacm.c`, `build-luma-bootimg.py` (`build.sh` `build_bootimg_luma()` updated to invoke `$ROOT/legacy/tools/build-luma-bootimg.py`).
+- `legacy/userland/fedora/` (moved from `userland/fedora/`): 22 Fedora 44 systemd units, NM configs, PAM files, and `system-sleep-ufs.sh` (removed empty `userland/` and `uefi/`).
+- `legacy/build-out/` (moved from `build/out/`, gitignored): `fedora-rootfs.cpio.gz`, `boot-luma*.img`, `payload-luma*.bin`, `boot-linux-oneshot.img`, `payload-linux-oneshot.bin`, `payload-probe.bin`.
+- Verified: `./tools/policy-scan.sh` (`OK (22 code files, 42 path files)`), `./tools/preflight.sh` (`preflight: OK`), and `./build.sh check` (`[OK] 25 patches applied`, DTB builds cleanly).
+
+## Denial Mobile: Subsystem Audit & Quick-Win Fixes — Bluetooth, PipeWire Audio, Sensors, Backlight, `tqftpserv` (verified 2026-11-17)
+
+### 1. Live Subsystem Audit Matrix (on `10.77.71.2`)
+
+| Subsystem | Initial Audit Status | Root Cause / Live Evidence |
+|---|---|---|
+| **Sensors (`steinerd` + `hexagonrpcd`)** | **WORKING** | `steinerd.service` active: detects `ams AG tsl2560` (ALS), `BOSCH bmi26x` (accel + gyro), `XiaoMi gyro_cal`, `qualcomm Rotation Vector` via `hexagonrpcd` / ADSP. |
+| **Backlight (`wled`)** | **PRESENT** | `/sys/class/backlight/backlight` (`pmic@5:leds@d800`): `brightness=2048`, `max_brightness=4095`, `actual_brightness=2048`. (`brightnessctl` not installed in image). |
+| **Audio (ALSA + PipeWire)** | **NO SINKS** | Kernel sees `card 0: XiaomiRedmiK305`, but WirePlumber exposed 0 sinks because `/usr/share/alsa/ucm2/conf.d/sm8250/` lacked a profile for `Xiaomi-RedmiK305G-picasso-G7AE` / `Xiaomi-Redmi-K30-5G` and `SEC_MI2S_RX Audio Mixer MultiMedia1` defaulted to `off`. |
+| **Bluetooth (`wcn3991-bt` / `ttyHS1`)** | **FW PATH BUG** | `ttyHS1` requested `qca/crbtfw32.tlv`, failing `-2` because `/dev/sde33` (`bluetooth`) mounted at `/lib/firmware/qca` with an `image/` subdir (`/lib/firmware/qca/image/crbtfw32.tlv`). |
+| **Modem (`remoteproc1`) & QRTR** | **PARTIAL** | `modem` `running` and `qrtr-lookup` shows Voice/NAS/WDS/DMS/UIM/PDS, but `tqftpserv.service` & `rmtfs.service` were `inactive (dead)`. |
+| **Wi-Fi (`ath10k_snoc` / `18800000.wifi`)** | **NO `wlan0`** | `wlanmdsp.mbn`/`bdwlan.bin` present in `/lib/firmware/qcom/sm7250/xiaomi/picasso/image/`, `tqftpserv` was down and `bdwlan.b19` missing. |
+| **Battery / Charger** | **USB ONLY** | `pm7250b-usb` (`online=1`, `status=Full`); `upower -d` shows `line_power_pm7250b_usb` online, no battery fuel-gauge (`DisplayDevice` 0% / `battery-missing-symbolic`). |
+
+### 2. Quick-Win Fixes Implemented (`tools/init.c`) & Verified on Hardware
+
+1. **Bluetooth (`wcn3991-bt` / `hci0`) — WORKING**:
+   - `mount_firmware()` in `tools/init.c` mounts `/dev/sde33` (`bluetooth`) at `/mnt/bt_fw` and bind-mounts `/mnt/bt_fw/image` onto `/lib/firmware/qca` so `qca/crbtfw32.tlv` and `crnv32*.bin` live directly at `/lib/firmware/qca/`.
+   - Verified in `dmesg`: `QCA Downloading qca/crbtfw32.tlv` → `QCA Downloading qca/crnv32.bin` → `QCA FW build version: BTFM.CHE.3.2.1-00174-QCACHROMZ-1.372365.1` → `QCA setup on UART is completed`.
+   - Verified with `btmgmt info`: `hci0: Primary controller`, `current settings: powered ssp br/edr le secure-conn wide-band-speech ll-privacy past-sender past-receiver`, `name picasso`.
+
+2. **Audio (ALSA UCM2 + PipeWire Speaker Sink) — WORKING**:
+   - `write_device_dropins()` in `tools/init.c` provisions `/run` drop-ins without modifying `/usr/share/alsa/ucm2`:
+     - `/run/alsa-ucm2/Qualcomm/sm8250/Picasso-HiFi.conf` (`EnableSequence` sets `'SEC_MI2S_RX Audio Mixer MultiMedia1' 1`; `Speaker` device on `hw:${CardId},0`, mixer elem `Speaker`).
+     - `/run/alsa-ucm2/conf.d/sm8250/Xiaomi-RedmiK305G-picasso-G7AE.conf` (+ `Xiaomi-Redmi-K30-5G.conf` symlink).
+     - `/run/systemd/system/picasso-ucm2.service` (enabled in `multi-user.target.wants`, overlays `/usr/share/alsa/ucm2/.` into `/run/alsa-ucm2/`).
+     - `/run/systemd/user/wireplumber.service.d/ucm2.conf` (`Environment=ALSA_CONFIG_UCM2=/run/alsa-ucm2`).
+   - Verified: `picasso-ucm2.service` `active (exited)` (`0/SUCCESS`), `amixer -c 0 cget name="SEC_MI2S_RX Audio Mixer MultiMedia1"` returns `values=on`, `wpctl status` exposes `* 43. Built-in Audio Speaker [vol: 0.40]` as default sink on boot, and `pw-play --raw` streams audio (`rc=0`).
+
+3. **`tqftpserv.service`, Backlight & Wi-Fi Status**:
+   - Enabled `tqftpserv.service` in `/run/systemd/system/multi-user.target.wants/` (`active (running)` on boot).
+   - Verified `/sys/class/backlight/backlight` (`pmic@5:leds@d800`) responds cleanly to brightness writes (`1024` / `2048` out of `4095`).
+   - Wi-Fi (`ath10k_snoc` `18800000.wifi`) still does not bring up `wlan0` (next deeper investigation item).
+
+### 3. Hygiene & Updated Artifact Hashes
+- `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`
+- `./tools/preflight.sh`: `preflight: OK`
+- `build/out/initrd.cpio.gz`: `421b4241d16030c9f300efccc86ef3d6f529c2395f46adbe3046b4962e6e7e37`
+- `build/out/boot-linux.img`: `b0af10ff6e36bb0ad79a0e6716c5cc20d8d31a73ec066d166aa967a762cd2190`
+- `build/out/payload-linux.bin`: `4cd4fc401b3374587c0607436a4a01f47d66011ae41dc6c10c60a78dcb77699b`
+
+### 4. Wi-Fi / TFTP (`tqftpserv` & `ath10k_snoc`) Investigation (verified 2026-11-17)
+
+- **Changes in `tools/init.c`**:
+  - `mount_firmware()`: Added `/readonly/firmware/image`, `/readonly/vendor/firmware_mnt/image`, and `/var/lib/tqftpserv/readonly/firmware/image` → `/lib/firmware/qcom/sm7250/xiaomi/picasso/image` symlinks, symlinked all files from `picasso/image/*` into `/lib/firmware/<name>`, and created `/lib/firmware/ath10k/WCN3990/hw1.0/board.bin` → `bdwlan.bin`.
+  - `bind_firmware()`: Added `/lib/firmware/ath10k` to the bind-mount list (`root: bound /lib/firmware/ath10k`).
+  - `write_device_dropins()`: Removed duplicate `tqftpserv.service` enablement so only ramdisk `/bin/tqftpserv` owns QRTR TFTP port `16385`.
+- **Live Boot Results (`10.77.71.2`)**:
+  - `remoteproc1` (`modem`): `running` (`[5.347955] remote processor modem is now up`), no watchdog crash.
+  - `qrtr-lookup`: Single TFTP instance (`4096 1 0 1 16385 TFTP`), no WLFW service `69`; `ip -br link` shows `lo` and `usb0` only (no `wlan0`).
+  - `tqftpserv` still logs `unable to open /readonly/firmware/image/wlanmdsp.mbn (2), reject` at `t=46.50s` despite both `/lib/firmware/wlanmdsp.mbn` and `/readonly/firmware/image/wlanmdsp.mbn` existing in its mount namespace. Disassembly of `tools/bin/tqftpserv` shows `translate_readonly` reads `/sys/class/remoteproc/remoteproc*/firmware` and concatenates `/lib/firmware/<rproc_dir>/<file>` (and `/lib/firmware/updates/<rproc_dir>/<file>`); requires runtime `strace` on `tqftpserv` to see the exact failing `open()` path.
+  - Bluetooth (`hci0`), Audio (`Built-in Audio Speaker`), Sensors (`steinerd`), and `hexagonrpcd` all remain GREEN.
+- **Updated Artifact Hashes & Hygiene**:
+  - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`; `./tools/preflight.sh`: `preflight: OK`.
+  - `build/out/Image`: `687f6088b6c6070999312c0a03793296483eb356296d1d1a73f3bb6804061eb8`
+  - `build/out/initrd.cpio.gz`: `040f2ea07d866b4c64c75babc4fb4fa7154fed966562c96f50c6d7e373da4547`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `6d90cbb0b60477f05d7b797351f9783254f2638cd6811e14706f0bc0d3024762`
+  - `build/out/boot-linux.img`: `b9bc1387c24e8277bc1ee91c36cc0ec6a85ce26a3812ba684b0125d0a948f4d1`
+  - `build/out/payload-linux.bin`: `11b54987a2820448e63a1444096bcc4d562367e088388cf0a841574a5986e3f0`
+
+### 5. `MS_BIND | MS_REC` Fix Eliminates `tqftpserv` `ENOENT` Rejections (verified 2026-11-17)
+
+- **Root cause & fix (`tools/init.c` `switch_to_partition()`)**:
+  - Confirmed `/proc/$(pgrep -x tqftpserv)/root/sys/` was empty after `switch_to_partition()` used `MS_MOVE` on `/dev`, `/proc`, `/sys`, causing `tqftpserv`'s `translate_readonly()` (`opendir("/sys/class/remoteproc")`) to fail with `ENOENT`.
+  - Changed `/dev`, `/proc`, `/sys` mount in `switch_to_partition()` from `MS_MOVE` to `MS_BIND | MS_REC`, keeping `/sys` mounted in the ramdisk namespace for `tqftpserv`, `pd-mapper`, and `rmtfs`.
+- **Live Boot Results (`uptime > 55s`)**:
+  - **ZERO** `tqftpserv: unable to open /readonly/...` rejections across `>86s` (previously 12+ rejections at `t=46.5s`).
+  - `pd-mapper` actively serves domain list requests from node 1 and node 5 (`avs/audio`, `tms/pdr_enabled`, `tms/pddump_disabled`, `tms/servreg`).
+  - `remoteproc1` (`modem`): `running` (`[45.719562] remote processor modem is now up`).
+  - `18800000.wifi` (`ath10k_snoc`) bound with `board.bin`, but `qrtr-lookup` still shows no `WLFW` service (`69`) announced by `modem`, so `wlan0` is not yet created.
+- **Hygiene & Final Artifact Hashes**:
+  - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`; `./tools/preflight.sh`: `preflight: OK`.
+  - `build/out/Image`: `687f6088b6c6070999312c0a03793296483eb356296d1d1a73f3bb6804061eb8`
+  - `build/out/initrd.cpio.gz`: `5d62c32e33f8fc4d17d24e48dfedb04a1db91004e1a414586bd046065253205c`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `6d90cbb0b60477f05d7b797351f9783254f2638cd6811e14706f0bc0d3024762`
+  - `build/out/boot-linux.img`: `f1c37940b900a9f7845eb784a7e38f29ba33566c8cf6a80a5e847b915754f347`
+  - `build/out/payload-linux.bin`: `10ecaa3a1bcc785e0c368dd0e68c9bc32b0069a600be1bd79ef58a06cf3b9a74`
+
+### 6. Wi-Fi (`wlan0` / `ath10k_snoc` / WCN3990) — WORKING on Boot (verified 2026-11-17)
+
+- **Root Causes Fixed (`tools/init.c` & `tools/mkinitramfs.sh`)**:
+  1. **Firmware `tmpfs` + `dsp` + `tms/pddump_disabled` PD maps (`tools/init.c`)**: Mounted `modem` (`/mnt/modem_fw`) and `dsp` (`/mnt/dsp_fw`), mounted `tmpfs` at `/lib/firmware/qcom/sm7250/xiaomi/picasso/image`, symlinked all files from `image/`, and wrote `tms-pddump-{modem-root_pd,adsp-audio_pd,cdsp-root_pd}.jsn`. Linked `/lib/firmware/ath10k/WCN3990/hw1.0/board.bin` → `bdf_g7a.bin` and bound `/mnt/modem_fw`, `/mnt/dsp_fw`, `/lib/firmware/qcom/sm7250/xiaomi/picasso/image`, and `/lib/firmware/ath10k` into `/newroot`.
+  2. **Service Start Order (`tools/init.c`)**: Moved `rebind("qcom_geni_serial", ...)`, `rebind("qcom_q6v5_pas", "4080000.remoteproc")`, and `rebind("ath10k_snoc", "18800000.wifi")` to run **after** `rmtfs`, `pd-mapper`, and `tqftpserv` start, so `modem` sees `tms/pddump_disabled` and `wlanmdsp.mbn` on boot and announces QMI service `69` (`WLFW`).
+  3. **`ath10k/WCN3990/hw1.0/firmware-5.bin` (`tools/mkinitramfs.sh`)**: Packed the 60-byte `WCN3990/hw1.0/firmware-5.bin` metadata container into the initramfs so `ath10k_snoc` loads it automatically at `t=12s`.
+- **Verified Live Boot Output (`10.77.71.2`)**:
+  - `dmesg`:
+    - `[    6.076948] ath10k_snoc 18800000.wifi: qmi chip_id 0x320 chip_family 0x4001 board_id 0xff soc_id 0x400b0000`
+    - `[   12.144152] ath10k_snoc 18800000.wifi: wcn3990 hw1.0 target 0x00000008`
+    - `[   12.144189] ath10k_snoc 18800000.wifi: firmware ver  api 5 features wowlan,mgmt-tx-by-reference,non-bmi crc32 b3d4b790`
+  - `ip -br link` & `iw dev`: `wlan0` (`phy#1`, `type managed`, `96:ff:22:36:35:99`, `<NO-CARRIER,BROADCAST,MULTICAST,UP>`).
+  - `nmcli device wifi list --rescan yes`: `wlan0` actively scans 2.4 GHz & 5 GHz WPA2 networks (`<ssid>` 5 GHz ch 153 at 97% signal, `<ssid>` 5 GHz ch 153 at 92% signal).
+  - All other subsystems (`hci0`, `Built-in Audio Speaker`, `steinerd`, `hexagonrpcd`, `denial.service`) remain GREEN.
+- **Hygiene & Final Artifact Hashes**:
+  - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`; `./tools/preflight.sh`: `preflight: OK`.
+  - `build/out/Image`: `687f6088b6c6070999312c0a03793296483eb356296d1d1a73f3bb6804061eb8`
+  - `build/out/initrd.cpio.gz`: `c240d2d0f617662dba0da9c675aef3c5b6ce6c4bbc8e52b53d56ef526353b358`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `6d90cbb0b60477f05d7b797351f9783254f2638cd6811e14706f0bc0d3024762`
+  - `build/out/boot-linux.img`: `d3f982615447f0fc8c37b62189bf03dda157ae9239265b40665fc685eb1b08c8`
+  - `build/out/payload-linux.bin`: `be561b86d62818fe932486d03d0aed02998b1be78f57fa408deb56f8a59405cc`
+
+### 7. Display DPMS Lock Screen, Power Key, and Novatek Touch Firmware (verified 2026-11-17)
+
+- **Root Cause Found**:
+  - `denial.service` (`/usr/bin/deniald --device /dev/dri/card1`) was running and allocating `1080x2400` XR30 framebuffers on `card1-DSI-1`, **but**:
+    1. `deniald::dpms` locks and powers off `DSI-1` via DRM DPMS (`enabled=disabled`, `bl_power=4`) after ~30 seconds of inactivity.
+    2. `novatek/novatek_nt36672c_g7a_fw03.bin` was missing from the initramfs (`SRAM firmware upload failed: -2`), leaving the touchscreen dead so tapping could not wake the screen.
+    3. `tools/init.c`'s `logind.conf.d` drop-in had `HandlePowerKey=suspend`, causing short power-key presses to suspend via `logind` instead of letting `deniald` wake/lock the lock screen.
+- **Fixes Implemented & Verified on Fresh Boot**:
+  - Staged `novatek_nt36672c_g7a_fw03.bin` in `prebuilt/fw-touch/`, packed it into `/lib/firmware/novatek/` in `tools/mkinitramfs.sh`, and added `/lib/firmware/novatek` to `bind_firmware()` in `tools/init.c`.
+  - Changed `HandlePowerKey=suspend` → `HandlePowerKey=ignore` in `tools/init.c` (`write_device_dropins()`, keeping `HandlePowerKeyLongPress=poweroff`).
+  - Live boot evidence: `picasso-nvt-vendor spi0.0`: `novatek/novatek_nt36672c_g7a_fw03.bin: 131072 of 139264 bytes, 15 partitions, hw crc 2`, `fw reset state 0xa0 after 1 polls`, `fw info: ver 0x0a x_num 16 y_num 36 abs 1080x2400 type 0x01` (`NVTCapacitiveTouchScreen` active on `input2`/`event2`). Display: `enabled=enabled bl_power=0 brightness=2048`, `framebuffer[82]: allocated by = deniald, size=1080x2400`.
+- **Hygiene & Final Artifact Hashes**:
+  - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`; `./tools/preflight.sh`: `preflight: OK`.
+  - `build/out/Image`: `687f6088b6c6070999312c0a03793296483eb356296d1d1a73f3bb6804061eb8`
+  - `build/out/initrd.cpio.gz`: `2dd2aa02393f8d625ac900c26ee871980f4e309e76a359c589190c5ff035a6fb`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `6d90cbb0b60477f05d7b797351f9783254f2638cd6811e14706f0bc0d3024762`
+  - `build/out/boot-linux.img`: `35cd5f184455161ceba4e1e8fda77f9f9daf4185a88dc279bf4f737df253bae7`
+  - `build/out/payload-linux.bin`: `ba6f613707ae52f12e1867b3d88330f0381ecfa4f15baf6db56c32c6c7bc85d1`
+
+### 8. Physical Backlight (`d846: 80`) Fix & Adreno 620 `0x00800007` GPU Hang Investigation (verified 2026-11-17)
+
+- **Physical Backlight (`pm8150l_wled`) — FIXED (`d846: 80`)**:
+  - `qcom-wled` (`wled_ovp_work`) had been turning off the WLED boost converter (`0xd846` = `00`). Removed `backlight = <&pm8150l_wled>;` from `panel@0` and set `&pm8150l_wled { status = "disabled"; };` in `sm7250-xiaomi-picasso.dts` (`0002*`).
+  - Verified on hardware (`10.77.71.2`): `/sys/kernel/debug/regmap/0-05/registers` shows `d846: 80` (`WLED3_CTRL_REG_MOD_EN` = ON), `d847: 86`, `d946: 70`; `/sys/class/drm/card1/card1-DSI-1/{status,enabled,dpms}` = `connected`, `enabled`, `On`; `framebuffer[82]` allocated by `deniald` (`1080x2400`). Panel backlight is physically ON (`fbcon` / `modetest` lit).
+- **Adreno 620 `0x00800007` GPU Hang (`a6xx_gmu.c`)**:
+  - Clamped `index` to the highest non-zero `mx[j]` in `a6xx_gmu_rpmh_dep_votes_init()` (`0010*`).
+  - `deniald` GPU submissions (`io.flutter.rast` / `deniald:gdrv0`) still hit ring 0 fault `0x00800007` / `0x00C00017` (`ib1 0000000000000000/0000`, `hangcheck recover!`).
+- **Exported Patches & Final Artifact Hashes**:
+  - `./build.sh export-patches` regenerated `0002*` & `0010*`.
+  - `build/out/Image`: `da2b4c5b5137f8edaa62adc4f5177a8253ddeffea732e4742409439800c9f41d`
+  - `build/out/initrd.cpio.gz`: `2dd2aa02393f8d625ac900c26ee871980f4e309e76a359c589190c5ff035a6fb`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `2bb6c2ca89e6df699a30ff0e6c89de6c4bb62a07cf144d94dc301417fa550485`
+  - `build/out/boot-linux.img`: `eaa69d7182c806f7312ae298c8b0af0347cb0d4fe1bded0096f293699233f41b`
+  - `build/out/payload-linux.bin`: `5c2aa0628a0cdf62226b825f64387501b41e5736f17f8775506a9d3a3637b9ab`
+
+### 9. Adreno 620 GPU & `deniald` Rendering — WORKING with Zero Faults (verified 2026-11-17)
+
+- **Root Cause Found & Fixed**:
+  - `prebuilt/fw-gpu/a650_sqe.fw` (32304 B, SHA256 `a0e1b583f620fabe32729ce367959d1960638663244d7d0cfc21b9a5215a018b`) was byte-for-byte identical to Gen1 `a630_sqe.fw`, causing every Gen3 Adreno 620 (`0x06020000`) userspace ring-0 submission to fault (`0x00800007` / `0x00C00017`, `hangcheck recover!`).
+  - Replaced `prebuilt/fw-gpu/a650_sqe.fw` with the real Gen3 SQE firmware (31804 B, SHA256 `7db957e3d06bfc14998b3cd6eb6e076206446f897bd1224f19b14c365e7d5013`) and reverted all temporary GPU/IOMMU kernel hacks (`a6xx_create_private_vm`, `arm-smmu-qcom.c` TTBR1, `a6xx_catalog.c` cached-coherent).
+- **Verified Live Boot Output (`10.77.71.2`)**:
+  - `dmesg`: `loaded qcom/a650_sqe.fw from new location`, `loaded qcom/a650_gmu.bin from new location`, `loaded qcom/a620_zap.mbn from new location`; **ZERO** `gpu fault`, `hangcheck`, `recover`, or `a6xx_irq` errors.
+  - `denial.service`: `active (running)`, PID 596 `/usr/bin/deniald --device /dev/dri/card1 --output-config /home/picasso/.local/state/denial/outputs.conf --wayland --flutter-bundle /usr/lib/denial/flutter`.
+  - `/sys/kernel/debug/dri/1/framebuffer`: `framebuffer[82]` allocated by `deniald`, `XR30` (`1080x2400`, `pitch[0]=4352`).
+  - Display & WLED: `card1-DSI-1` `connected`, `enabled`, `dpms: On`; `0-05` registers `d846: 80`, `d847: 86`, `d946: 70`.
+- **Host Checks & Final Artifact Hashes**:
+  - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+  - `./build.sh check`: `[OK] 25 patches applied`, `dtbs_check: 12 schema diagnostics from the vendor series` (note: `./tools/preflight.sh` flagged trailing whitespace in `patches/linux/picasso/0010-drm-msm-a6xx-fix-rpmh-dependency-votes.patch`).
+  - `prebuilt/fw-gpu/a650_sqe.fw`: `7db957e3d06bfc14998b3cd6eb6e076206446f897bd1224f19b14c365e7d5013`
+  - `build/out/Image`: `4870505e3e022436563677212f9d0091c66d02c9ad72794e3a24c1df7aca480e`
+  - `build/out/initrd.cpio.gz`: `7719fb1d564d570fca450fcb89580e0de1fc629491635ebb9dcd8a8ea82e55e1`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `2bb6c2ca89e6df699a30ff0e6c89de6c4bb62a07cf144d94dc301417fa550485`
+  - `build/out/boot-linux.img`: `debb683bd5f5328a8ba3e718568df8afa0cc98ed38a57388b320c3bbeed7441a`
+  - `build/out/payload-linux.bin`: `dd4ab1b6d37ade9d1f2ecb6240534934ad3ee245c6dcb5e133b01ce18b6b355b`
+
+### 10. 120Hz Display Mode Name (`0006*`) & QRTR `announce_servers()` `-EAGAIN` Race Fix (`0011*`) — WORKING (verified 2026-11-17)
+
+1. **120Hz Refresh Rate (`patches/linux/picasso/0006-drm-panel-xiaomi-g7a.patch`)**:
+   - `panel-xiaomi-g7a-37-02-0a.c` (`G7A_VREFRESH 120`) was already driving 120Hz (`334660` kHz), but `g7a_get_modes()` did not call `drm_mode_set_name(mode)`, leaving `/sys/class/drm/card1-DSI-1/modes` blank (`""`).
+   - Added `drm_mode_set_name(mode)` in `g7a_get_modes()` and exported to `0006*`.
+   - Verified on phone (`10.77.71.2`): `/sys/class/drm/card1/card1-DSI-1/modes` → `1080x2400`; `crtc[73]` → `enable=1`, `active=1`, `mode: "1080x2400": 120 334660 1080 1110 1114 1130 2400 2432 2436 2468 0x48 0x0`.
+2. **Wi-Fi / Modem QRTR Race Fix (`patches/linux/picasso/0011-net-qrtr-ns-retry-announce-on-eagain.patch`)**:
+   - *Root Cause*: When `modem` (`0:-2`) or `adsp` (`5:-2`) sent `QRTR_TYPE_HELLO` before `qrtr_hello_work` completed (`node->hello_sent == false`), `qrtr_node_enqueue()` returned `-EAGAIN`. `net/qrtr/ns.c:announce_servers()` only ignored `-ENODEV`, printed `failed to announce new service`, and aborted announcing `rmtfs`/`pd-mapper`/`tqftpserv` to `modem`, causing `modem` to stall 40s and crash (`dog_hal_common.c:180`).
+   - *Fix*: Added `0011-net-qrtr-ns-retry-announce-on-eagain.patch` to `patches/linux/series` to retry `service_announce_new()` on `-EAGAIN` (`msleep(10)`, up to 100 retries).
+   - *Verified on phone*: `remoteproc1` (`modem`) `running`, ZERO `failed to announce new service` or `dog_hal` errors, `ath10k_snoc 18800000.wifi: wcn3990 hw1.0 target 0x00000008`, `wlan0` UP, `nmcli device wifi list --rescan yes` scans 2.4 GHz & 5 GHz WPA2 networks (`<ssid>` 95%, `<ssid>` 94%), and ZERO GPU faults.
+3. **Checks & Final Artifact Hashes**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 26 patches applied`, `dtbs_check: 12 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `4219095124c51535f5299fa1216a3aa773e05b0dfbbe2ff3310a0f91b4053c24`
+   - `build/out/initrd.cpio.gz`: `7719fb1d564d570fca450fcb89580e0de1fc629491635ebb9dcd8a8ea82e55e1`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `2bb6c2ca89e6df699a30ff0e6c89de6c4bb62a07cf144d94dc301417fa550485`
+   - `build/out/boot-linux.img`: `3c2d02d964a6b9f7ded8d8572168cff6cd5d9eff26afcb03bdeb143eef71f64c`
+   - `build/out/payload-linux.bin`: `27edb5c263c92d6bf99bcd6a7de5c9b0fb9fe0777752507be5b6362cbb7e42b7`
+
+### 11. DPMS Backlight (`pm8150l_wled`) — FIXED (`0002*`, `0012*`), Plus Audio/120Hz/Venus Diagnostics (verified 2026-11-17)
+
+1. **Display off / Backlight on — FIXED (`0002*` + `0012*`)**:
+   - *Root Cause*: `pm8150l_wled` had been disabled in DT (`0002*`); enabling it previously failed because `qcom,current-limit-microamp = <22500>;` was missing and `qcom-wled.c:wled_configure_ovp_irq()` only called `disable_irq(ovp_irq)` when `MOD_EN == 0` at probe, causing `Unbalanced enable for IRQ 138` in `wled_ovp_work` when the bootloader left `MOD_EN=0x80`.
+   - *Fix*: Added `backlight = <&pm8150l_wled>;` to `panel@0` and enabled `&pm8150l_wled` with downstream values (`qcom,enabled-strings = <0 1 2>;`, `qcom,ovp-millivolt = <28000>;`, `qcom,current-limit-microamp = <22500>;`, `qcom,cabc-sel = <0>;`) in `0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch`. Added `0012-backlight-qcom-wled-balance-ovp-irq.patch` (`ovp_irq_disabled` state tracking in `qcom-wled.c`).
+   - *Verified on phone (`10.77.71.2`)*: `/sys/class/backlight/backlight` (`brightness=2048`, `max_brightness=4095`, `bl_power=0`); `journalctl -k -b | grep -iE "wled|ovp|unbalanced"` → `NONE`; `bl_power=0` → `0-05` `d846: 80, d847: 86, d946: 70`; `bl_power=4` → `d846: 00` (OFF); `bl_power=0` → `d846: 80` (ON).
+2. **Audio Diagnosis (`10.77.71.2`)**:
+   - `pcm0p` `RUNNING` (`S24_LE` 2ch 48kHz, `hw_ptr` advancing), `tfa9874 0-0034: status 0x0016 clk 0xe2c0 sys 0x0018 gain 0x027c tdm 0x0890/0xc0f1` (`AMPE=1`, `DCA=1`, `CLKS=1`).
+   - Suspect for inaudible output: `wpctl status` defaults `* 43. Built-in Audio Speaker [vol: 0.23]` (PipeWire cubic volume `0.23^3 = 1.2%` linear / `-38 dB`) + `amixer -c 0 sget Speaker` = `6 [86%]` (`TDMSPKG = 9`).
+3. **120Hz Stutter Evidence (`10.77.71.2`)**:
+   - GPU devfreq (`3d00000.gpu`): `cur=625000000 min=550000000 max=625000000 gov=simple_ondemand` (not stuck at low OPP); CPU `schedutil` active.
+   - `dmesg` shows `sync_state() pending due to 3d6a000.gmu` on `gcc-sm7250` & `sm7250-gpucc`, and per-frame `msm_atomic_commit_tail: crtc_mask 0x1 async 0` / `dpu_crtc_atomic_flush: crtc73 pending 0x1`. Chromium flags files (`/etc/chromium-flags.conf`, `~/.config/chromium-flags.conf`) do not exist.
+4. **Video Hardware Decode (`venus`) Status**:
+   - No `/dev/video*` or `/dev/media*` devices; `.config` has `CONFIG_VIDEO_QCOM_VENUS=m` and `sm7250.dtsi:828` has `venus: video-codec@aa00000` `status = "disabled";` (plus needs `venus.mbn` firmware).
+5. **Checks & Final Artifact Hashes**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 27 patches applied`, `dtbs_check: 12 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `16b41386e667c4d077d48e501ba3917ef10edb1106a5fdfb2b9565c8e3dcbcbf`
+   - `build/out/initrd.cpio.gz`: `7719fb1d564d570fca450fcb89580e0de1fc629491635ebb9dcd8a8ea82e55e1`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `e1477a3622ad4e680329b4ed7ef7a2824c58e230b69e549f1764b54108348706`
+   - `build/out/boot-linux.img`: `82b93cf57afe2b317f346b317fab7351da68cf07c47df335efed33ec2ff482ca`
+   - `build/out/payload-linux.bin`: `3f5115b3b830c8fd6169555fa83160bd667493bd054fc8bc832ac9910fcf6d97`
+
+### 12. 120Hz Smoothness (`0013*` + Chromium Flags), PipeWire `S16_LE` Audio, and `qcom-venus` Status (verified 2026-11-17)
+
+1. **120Hz Smoothness (`0013-drm-msm-drop-per-frame-pr-info.patch` + Chromium Wayland/GPU flags)**:
+   - Converted per-frame `pr_info()` calls in `msm_atomic.c:223` and `dpu_crtc.c:914` to `DRM_DEBUG_ATOMIC` (`0013*`), eliminating ~851+ serial/tty0 console log lines per few seconds of scrolling.
+   - Added `/home/picasso/.config/chromium-flags.conf` in `tools/init.c` (`--ozone-platform=wayland --enable-features=UseOzonePlatform --ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy`).
+   - Verified on `10.77.71.2`: `crtc73_pending=0`, `msm_atomic=0`, `/sys/class/drm/card1/card1-DSI-1/modes` = `1080x2400` (120Hz), `GPU_FAULTS=NONE`, `wlan0` UP.
+2. **Audio (`S16_LE` + `Speaker` 100%)**:
+   - Updated `tools/init.c`: `Picasso-HiFi.conf` sets `Speaker Playback Volume` = `7` (`100%`), `wireplumber.service.d/ucm2.conf` adds `XDG_CONFIG_DIRS=/run:/etc/xdg`, and `/run/wireplumber/wireplumber.conf.d/50-picasso-alsa.conf` forces `audio.format = "S16LE"`, `audio.rate = 48000`, `audio.channels = 2` (matching `sm8250_be_hw_params_fixup`).
+   - Verified on `10.77.71.2`: `amixer -c 0 sget Speaker` = `7 [100%]`, `pw-play` opens `card 0` in `format: S16_LE` (`channels: 2, rate: 48000`).
+3. **Hardware Video Decode (`qcom-venus`) Status**:
+   - Enabled `CONFIG_SM_VIDEOCC_7250=y`, `CONFIG_MEDIA_SUPPORT=y`, `CONFIG_VIDEO_DEV=y`, `CONFIG_VIDEO_QCOM_VENUS=y` in `configs/linux/picasso.config` and `&venus` (`firmware-name = "qcom/sm7250/xiaomi/picasso/image/venus.mdt"`, `status = "okay"`) in `0002*`.
+   - Early boot probe at `t=0.86s` fails `-2` because `/lib/firmware/.../venus.mdt` is mounted later by `tools/init.c`. Manual bind after boot (`echo aa00000.video-codec > /sys/bus/platform/drivers/qcom-venus/bind`) loads `venus.mdt` but fails with `VenusLow : error reading F/W version` / `wait for cpu and video core idle fail (-110)` (no `/dev/video*` yet; left un-rebound in `init.c` so boot isn't delayed).
+4. **Checks & Final Artifact Hashes**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 28 patches applied`, `dtbs_check: 14 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `77ae73118a595c2dcf9665c58558fe80d7aceb716436a880a76729c3cc961841`
+   - `build/out/initrd.cpio.gz`: `01e777abc5168cb0e05c7addc4ba8c76dce2c2ba41b645c0728084ade3656fa1`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `13fa6c1fc1d34cc9c2c2cdc02e4a43657569e8ae1dc60d951537d731b04f0119`
+   - `build/out/boot-linux.img`: `27d14a79b2b28feb5d601701a94f67f4d381d9ec3afcc75b8e4ec0e7da83d0c9`
+   - `build/out/payload-linux.bin`: `2cf278642aca00701fbe893e44039c4c19f79d942312e69007c7f164f7057d87`
+
+### 13. Hardware Video Decode (`qcom-venus`, `0014*`) — `/dev/video0` & `/dev/video1` Live on Boot (verified 2026-11-17)
+
+- **Root Cause & Fix**:
+  - In `hfi_venus.c:venus_suspend_3xx()`, `venus_cpu_and_video_core_idle()` timed out (`-110`, `cpu=0x0 ctrl=0x1` / `0x0`), causing `pm_runtime_put_sync()` in `venus_probe()` to abort and tear down `/dev/video*`.
+  - Exported `patches/linux/picasso/0014-media-venus-skip-iris1-power-collapse-on-idle-timeout.patch` (added to `patches/linux/series`): for `IS_IRIS1(core)` (`sm7250`), logs `cpu`/`ctrl` and returns `0` (skipping power-collapse and keeping Venus powered on, matching downstream `Skip PC`).
+  - Added `rebind("qcom-venus", "aa00000.video-codec");` in `tools/init.c` right after `/mnt/modem_fw` is mounted.
+- **Verified on `10.77.71.2`**:
+  - `firmware: bound aa00000.video-codec`
+  - `/dev/video0` (`qcom-venus-encoder`), `/dev/video1` (`qcom-venus-decoder`)
+  - `v4l2-ctl --list-devices`: `Qualcomm Venus video decoder (plat:aa00000.video-codec:dec): /dev/video1`, `Qualcomm Venus video encoder (plat:aa00000.video-codec:enc): /dev/video0`
+  - `v4l2-ctl -d /dev/video1 --list-formats-out`: `H264`, `VP80`, `VP90`, `HEVC`, `MPG2` (compressed, dyn-resolution).
+- **Checks & Final Artifact Hashes**:
+  - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+  - `./build.sh check`: `[OK] 29 patches applied`, `dtbs_check: 14 schema diagnostics from the vendor series`.
+  - `build/out/Image`: `2245edfa9c8a98c6190256e8ff4c1fdcad32ef6bdc58866f0b856c5e8f4cd971`
+  - `build/out/initrd.cpio.gz`: `788f70231f182cdb18531fa3187ea2ae51bc838bfa417e61fc3ee252f5c7fff2`
+  - `build/out/sm7250-xiaomi-picasso.dtb`: `13fa6c1fc1d34cc9c2c2cdc02e4a43657569e8ae1dc60d951537d731b04f0119`
+  - `build/out/boot-linux.img`: `30bd7e1313609b66f7b4cbc2546ffb831a278ceb70c41b5fdb36505ee64666d7`
+  - `build/out/payload-linux.bin`: `d5557b60ba65776024db42c3bbe722d911d234e8722928ab5d36b3417bab85d7`
+- **Live Decode & Permissions Follow-up**:
+  - Permissions: `picasso` (`uid=1000`) is in `video` (`983`), and `/dev/video0` & `/dev/video1` (`crw-rw----+ root video`) have `rw` access.
+  - Chromium flags updated in `tools/init.c` (`/home/picasso/.config/chromium-flags.conf`) to `--enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL`.
+  - Switched `0014*` (`core.c`) to `pm_runtime_forbid(dev); pm_runtime_put_noidle(dev);` for `IS_IRIS1(core)` so `venus_suspend_3xx()` is never called; `/dev/video0` & `/dev/video1` register cleanly with zero suspend timeouts, **but** `ffmpeg -y -c:v h264_v4l2m2m -i /tmp/test.h264 -f null -` fails at `[h264_v4l2m2m] output VIDIOC_REQBUFS failed: Connection timed out` (`HFI_CMD_SYS_SESSION_INIT` timeout after `VenusLow : error reading F/W version`). Needs deeper `sm7250` HFI/firmware investigation for end-to-end hardware decode.
+
+### 14. Droidloom (`droidloomd` + Android Cell) WORKING & `pm7250b-battery` (`0015*`) Live (verified 2026-11-17)
+
+1. **Droidloom (`droidloomd.service` + user `droidloom.service`) — WORKING**:
+   - Enabled built-in kernel configs in `configs/linux/picasso.config`: `CONFIG_ANDROID_BINDER_IPC=y`, `CONFIG_ANDROID_BINDERFS=y`, `CONFIG_NETFILTER_NETLINK=y`, `CONFIG_NF_TABLES*`, `CONFIG_NF_CONNTRACK=y`, `CONFIG_NF_NAT*`, `CONFIG_NFT_*`, `CONFIG_BRIDGE=y`, `CONFIG_VETH=y`, `CONFIG_OVERLAY_FS=y`, `CONFIG_DMABUF_HEAPS_{SYSTEM,CMA}=y`.
+   - Verified on `10.77.71.2`: `droidloomd.service` `active (running)` with full Android cell booted (`ueventd`, `servicemanager`, `hwservicemanager`, `vold`, `apexd`, `odsign`, `keystore2`, `logd`, `keymint-service`, `renderD128`); user `droidloom.service` `active (running)` (`Connected to Wayland; ready to start Android`); `/dev/dma_heap/{system,reserved,default_cma_region}` present.
+2. **Battery (`pm7250b-battery` / `0015*`) — LIVE**:
+   - `/sys/class/power_supply/pm7250b-battery` registered (`POWER_SUPPLY_TYPE=Battery`, `upower -d` sees `pm7250b-battery`, `VOLTAGE_OCV=4402883`).
+   - Identified `0x8000` QG "no data" sentinel on `0x4880`/`0x4882` (`S2_NORMAL_AVG`) causing `VOLTAGE_NOW=6377865` & `CURRENT_NOW=-5000003`, while `0x48c0` (`LAST_ADC_V` = `0x5714` → `4.338 V`) and `0x48c2` (`LAST_ADC_I` = `0x06a0` → `+258 mA`) hold valid readings; fallback to `0x48c0`/`0x48c2` on `0x8000` is the next small fix.
+3. **Checks & Artifact SHA-256 (`task-1782`)**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 30 patches applied`, `dtbs_check: 7 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `1757059846888b497d7b67b4b9ad7f7f99d0330011f890f9dddf7453ed7d9f37`
+   - `build/out/initrd.cpio.gz`: `32286b15583026db5d4cad725a45f551cea6b2faeb7d5a4b48f3b1c08bbef65a`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `13fa6c1fc1d34cc9c2c2cdc02e4a43657569e8ae1dc60d951537d731b04f0119`
+   - `build/out/boot-linux.img`: `66957e24c754b77f511fa52bf3953f1abb182cdb98b2b14f407196604955897c`
+   - `build/out/payload-linux.bin`: `67e2b5593a3ade997801f55ba007f50d5373624bf370594f64d20ebfd376b0b4`
+
+### 15. `pm7250b-battery` (`0015*`) WORKING & Venus `session_init` `-110` Pinpointed (verified 2026-11-17)
+
+1. **Battery (`pm7250b-battery` / `0015*` with `0x8000` sentinel fix) — WORKING**:
+   - Treated `0x8000` (`QG_INVALID_ADC_DATA`) on `0x4880`/`0x4882` as invalid and fell back to `0x48c0` (`LAST_ADC_V`) / `0x48c2` (`LAST_ADC_I`).
+   - Verified on `10.77.71.2`: `/sys/class/power_supply/pm7250b-battery/uevent` reports `POWER_SUPPLY_STATUS=Charging`, `POWER_SUPPLY_VOLTAGE_NOW=4363372` (`4.363 V`), `POWER_SUPPLY_VOLTAGE_OCV=4390037` (`4.390 V`), `POWER_SUPPLY_CURRENT_NOW=126495` (`+126 mA`), `POWER_SUPPLY_CAPACITY=97` (`97%`); `upower -d` reports `native-path: pm7250b-battery`, `state: charging`, `energy-rate: 0.808707 W`, `voltage: 4.35325 V`, `percentage: 96%`.
+2. **Venus (`qcom-venus`) `VIDIOC_REQBUFS` Diagnostic**:
+   - Pinpointed failure in `vdec_queue_setup()`: `pm_get=0`, `venus_session_init: type=2 codec=0x2 ret=0` (wrote `HFI_CMD_SYS_SESSION_INIT` to cmdq), `vdec_queue_setup: session_init=-110` (`wait_session_msg()` timed out after 1s; firmware never replied). Temporary debug prints reverted.
+3. **Checks & Artifact SHA-256**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 30 patches applied`, `dtbs_check: 7 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `ee7725d2444a382fb6a481124fb2cd2c6438b53b165fc4f5f6886c8aa3f14ee4`
+   - `build/out/initrd.cpio.gz`: `32286b15583026db5d4cad725a45f551cea6b2faeb7d5a4b48f3b1c08bbef65a`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `13fa6c1fc1d34cc9c2c2cdc02e4a43657569e8ae1dc60d951537d731b04f0119`
+   - `build/out/boot-linux.img`: `c49661714f26b3ea7f1b43b6826be2f81b8902183f3e60879e72f190159280ea`
+   - `build/out/payload-linux.bin`: `c3e688c1e742aa71e507807eb52f611b301980ef5e6ba74105ebcf98f5c79e93`
+
+### 16. Watchdog Timer (`2700s`), Wi-Fi SSH, TikTok in Droidloom, and `qcom-venus` Hardware H.264 Decode — WORKING (verified 2026-11-17)
+
+1. **Watchdog & Auto-Reboot Timer (45 min = `2700s`) (`tools/init.c`)**:
+   - Default `auto_reboot` updated from `300s` (5m) to `2700s` (45m) (`auto_reboot=<sec>` cmdline override), plus `/run/picasso-watchdog-pet` support and `picasso-watchdog.timer` / `picasso-watchdog.service` in `/run/systemd/system/`.
+2. **Wi-Fi SSH & TikTok in Droidloom (`#187`)**:
+   - `sshd` bound to `0.0.0.0:22` (`/run/11-phone-usb.conf` bind-mounted over `/etc/ssh/sshd_config.d/11-phone-usb.conf`), reachable via both USB (`10.77.71.2`) and Wi-Fi (`<lan-ip>`).
+   - Installed `/home/picasso/Downloads/tiktok.apk` (`com.ss.android.ugc.trill`) into the Droidloom Android container (`pm list packages | grep trill` → `package:com.ss.android.ugc.trill`, desktop launcher `/home/picasso/.local/share/applications/droidloom.com.ss.android.ugc.trill.desktop`).
+3. **Venus (`qcom-venus`) Hardware Video Decode (`patches/linux/picasso/0014-media-venus-skip-iris1-power-collapse-on-idle-timeout.patch`) — WORKING**:
+   - *Root Causes Fixed*:
+     - `pm_runtime_forbid(dev)` in `venus_probe()` (`core.c`) + `venus_fw_low_power_mode = false` (`hfi_venus.c`) prevent Iris1 (`VIDEO.IR.1.2-00043-PROD-1.352118.1`) power-collapse after `SYS_INIT`.
+     - `vcodec_control_v4()`, `poweron_coreid()`, and `poweroff_coreid()` (`pm_helpers.c`) keep `mvs0_gdsc` (`VIDC_CORE_ID_1`) in SW mode (`hwmode = false`) and powered across sessions on `IS_IRIS1(core)` so VSP (`0xe0000800`) stays powered and fires `0x29494` (`VSP_INTR`).
+     - `vdec_check_src_change()` (`vdec.c`) waits up to `100ms` on `inst->reconf_wait` when `inst->streamon_out` is active so `VIDIOC_G_FMT(CAPTURE)` waits for `HFI_EVENT_SESSION_SEQUENCE_CHANGED`.
+   - *Hardware Verification (`#198`, `<lan-ip>`, zero `dmesg` errors)*:
+     - `ffmpeg -y -c:v h264_v4l2m2m -i /tmp/test60.h264 -f null -`: `60 frames` (320x240) decoded in `0.08s` (`RC=0`).
+     - `ffmpeg -y -c:v h264_v4l2m2m -i /tmp/test300.mp4 -f null -` (back-to-back): `300 frames` (1280x720) decoded in `0.63s` (`speed=15.9x`, ~476 fps, `RC=0`).
+   - *Checks & Final Artifact SHA-256 (`#257`)*:
+     - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+     - `./build.sh check`: `[OK] 30 patches applied`, `[OK] series applies to a clean tree and the DTB builds`.
+     - `build/out/Image`: `55eb7ddf6b378080dab8683455ac9eb7163d69a6e2144f5e0eaeab64937dfab1`
+     - `build/out/sm7250-xiaomi-picasso.dtb`: `13fa6c1fc1d34cc9c2c2cdc02e4a43657569e8ae1dc60d951537d731b04f0119`
+     - `build/out/payload-linux.bin`: `3c1c13549b89fbb9732d60ff55d6411f73f08de79f1d5e0d8cc2db79667a035c`
+
+### 17. Android `netd` Kernel Configs (`#199`) & TikTok Live Playback Metrics (verified 2026-11-17)
+
+1. **Android `netd` `RouteController` Fix (`configs/linux/picasso.config`)**:
+   - Enabled `CONFIG_IP_ADVANCED_ROUTER=y`, `CONFIG_IP_MULTIPLE_TABLES=y`, `CONFIG_IPV6_MULTIPLE_TABLES=y`, `CONFIG_FIB_RULES=y`, `XFRM`, `INET_UDP_DIAG`, `INET_DIAG_DESTROY`, and `iptables`/`xtables` options as `=y`, resolving the Android `netd` `RouteController` boot loop in Droidloom (`Droidloom is running; Android is ready`).
+2. **TikTok (`com.zhiliaoapp.musically`) Live Playback Metrics (`#199`, `<lan-ip>`, muted)**:
+   - **GPU rendering**: Hardware GPU (`GLES: freedreno, FD620, OpenGL ES 3.2 Mesa 26.3.0`, `/dev/dri/renderD128` open by `musically`, `system_server`, `composer3`, `deniald`; `3d00000.gpu/cur_freq` = `625 MHz`).
+   - **Video decode**: CPU software decode — TikTok used ByteDance's in-app CPU `ByteVC1_dec` (`libByteVC1_dec.so` / `libbytevc0.so`), because Droidloom only exposes software `c2.android.*` (`c2.android.hevc.decoder`, `software-only: 1`) with no `/dev/video*` or V4L2 Codec2 HAL in the Android cell.
+   - **Steady-state CPU during playback**: `aoapp.musically` `57.1%` CPU (`21.1%` MEM), `deniald` `6.7%–8.8%`, `system_server` `6.8%`, `droidloom-audio` `2.4%`.
+3. **`#199` Artifact SHA-256**:
+   - `build/out/Image`: `616c928dee8d48a3ae745518a8fae0974926f00fab0eba9cb620d51ec66f35fd`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `13fa6c1fc1d34cc9c2c2cdc02e4a43657569e8ae1dc60d951537d731b04f0119`
+   - `build/out/payload-linux.bin`: `97adedd05652fe06126783f50b15304f05fd44f082d574e6092faf38787baea`
+
+### 18. 120Hz GPU Rendering Benchmark (Settings, Chromium on Wayland, Multitasking) (verified 2026-11-17)
+
+Measured on `<lan-ip>` (`#199`) with 120Hz touch-swipe injection into `/dev/input/event2` (`NVTCapacitiveTouchScreen`) over ~4.43s windows, counting `msm_mdss` (`msm` + `dsi_isr`), `3d00000.gpu` (`gpu-irq`), and `cur_freq`:
+
+| Scenario | `dsi_isr`/s | `msm` (DPU)/s | `gpu-irq`/s | GPU `cur_freq` | CPU Highlights |
+|---|---|---|---|---|---|
+| **A. Denial Settings** (`/usr/lib/denial-apps/settings`) | **120.2/s** (`+534` in `4.44s`) | **104.4/s** | **325.3/s** | `625 MHz` | `deniald` `3.0%` |
+| **B. Chromium** (`157.0.8103.78` on native Wayland `wayland-1`) | **120.0/s** (`+532` in `4.43s`) | **118.2/s** | **345.8/s** | `625 MHz` | `chromium` browser/gpu/renderer `49.3% / 40.8% / 25.4%` |
+| **C. Multitasking** (TikTok + Chromium + Denial Settings) | **120.0/s** (`+532` in `4.43s`) | **98.6/s** | **267.5/s** | `625 MHz` | `aoapp.musically` `68.4%`, `chromium` `27.1%/25.3%/16.6%`, `settings` `21.7%`, `system_server` `5.1%`, `surfaceflinger` `4.5%` |
+
+- Chromium picked up `/home/picasso/.config/chromium-flags.conf` (`--ozone-platform=wayland --enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL --ignore-gpu-blocklist --enable-gpu-rasterization --enable-zero-copy`) with GPU process (`--render-node-override=/dev/dri/renderD128`) active on Adreno 620.

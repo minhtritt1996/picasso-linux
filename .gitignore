@@ -15,6 +15,7 @@ prebuilt/fw-gpu/
 
 # Build artifacts that must never be tracked
 /out/
+/legacy/build-out/
 # Vendor firmware is read from the phone at runtime, never committed
 prebuilt/fw-*/
 prebuilt/*.dtb

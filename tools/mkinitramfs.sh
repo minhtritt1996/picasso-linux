@@ -29,6 +29,13 @@ if [ -d "$ROOT/prebuilt/fw-gpu" ]; then
 	echo "    [OK] gpu firmware: $(ls "$ROOT"/prebuilt/fw-gpu | wc -l) files"
 fi
 
+# Novatek touchscreen firmware (vendor blob, kept out of git)
+if [ -d "$ROOT/prebuilt/fw-touch" ]; then
+	mkdir -p "$TMP/lib/firmware/novatek"
+	cp "$ROOT"/prebuilt/fw-touch/* "$TMP/lib/firmware/novatek/"
+	echo "    [OK] touch firmware: $(ls "$ROOT"/prebuilt/fw-touch | wc -l) files"
+fi
+
 # kernel modules needed at runtime (audio, wifi), loaded by init from load.order
 KMOD="$ROOT/build/linux/out"
 if [ -f "$KMOD/modules.order" ]; then
@@ -46,6 +53,12 @@ if [ -f "$KMOD/modules.order" ]; then
 		esac
 	done < "$KMOD/modules.order"
 	echo "    [OK] modules: $(wc -l < "$TMP/lib/modules/load.order") packed"
+fi
+
+# ath10k WCN3990 metadata container (60 bytes; modem supplies WLAN firmware via TFTP)
+if [ -f /lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin ]; then
+	mkdir -p "$TMP/lib/firmware/ath10k/WCN3990/hw1.0"
+	cp /lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin "$TMP/lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin"
 fi
 
 # prebuilt static helpers (rmtfs, pd-mapper): see tools/bin/README

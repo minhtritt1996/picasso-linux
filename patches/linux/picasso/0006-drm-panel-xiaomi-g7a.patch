@@ -68,10 +68,10 @@ index dd8198372..740570583 100644
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_LD9040) += panel-samsung-ld9040.o
 diff --git a/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c b/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c
 new file mode 100644
-index 000000000..480031204
+index 000000000..d3db25d35
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c
-@@ -0,0 +1,764 @@
+@@ -0,0 +1,765 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Xiaomi Redmi K30 5G (picasso) DSI panel "g7a", 1080x2400 video mode with
@@ -712,6 +712,7 @@ index 000000000..480031204
 +	if (!mode)
 +		return -ENOMEM;
 +
++	drm_mode_set_name(mode);
 +	drm_mode_probed_add(connector, mode);
 +	connector->display_info.width_mm = ctx->mode->width_mm;
 +	connector->display_info.height_mm = ctx->mode->height_mm;

@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..ab83d610f
+index 000000000..37ff435ba
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,759 @@
+@@ -0,0 +1,765 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -461,9 +461,9 @@ index 000000000..ab83d610f
 +		 */
 +		xiaomi,panel-g7a-36-02-0c;
 +
-+			backlight = <&pm8150l_wled>;
 +		vddio-supply = <&vreg_l1c_1p8>;
 +		reset-gpios = <&pm8150l_gpios 3 GPIO_ACTIVE_LOW>;
++		backlight = <&pm8150l_wled>;
 +
 +		pinctrl-names = "default";
 +		pinctrl-0 = <&mdp_vsync_te_active>;
@@ -676,9 +676,10 @@ index 000000000..ab83d610f
 +
 +&pm8150l_wled {
 +	status = "okay";
-+	/* only one of num-strings / enabled-strings may be given */
 +	qcom,enabled-strings = <0 1 2>;
 +	qcom,ovp-millivolt = <28000>;
++	qcom,current-limit-microamp = <22500>;
++	qcom,cabc-sel = <0>;
 +};
 +
 +&gpu {
@@ -686,6 +687,11 @@ index 000000000..ab83d610f
 +};
 +
 +&gmu {
++	status = "okay";
++};
++
++&venus {
++	firmware-name = "qcom/sm7250/xiaomi/picasso/image/venus.mdt";
 +	status = "okay";
 +};
 +

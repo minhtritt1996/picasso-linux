@@ -189,7 +189,7 @@ build_bootimg_luma() {
 	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
 	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
 	[ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/mkinitramfs.sh" >/dev/null
-	python3 "$ROOT/tools/build-luma-bootimg.py" \
+	python3 "$ROOT/legacy/tools/build-luma-bootimg.py" \
 		--image "$OUT/Image" --initrd "$OUT/initrd.cpio.gz" \
 		--dtb "$OUT/sm7250-xiaomi-picasso.dtb" -o "$OUT/boot-luma.img" \
 		${LUMA_CMDLINE:+--cmdline "$LUMA_CMDLINE"}

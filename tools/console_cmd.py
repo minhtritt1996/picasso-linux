@@ -19,10 +19,18 @@ import sys
 import time
 import termios
 
-DEV = os.environ.get("CONSOLE_DEV", "/dev/ttyACM0")
+def get_dev():
+    if "CONSOLE_DEV" in os.environ:
+        return os.environ["CONSOLE_DEV"]
+    for dev in ("/dev/ttyACM1", "/dev/ttyACM0"):
+        if os.path.exists(dev):
+            return dev
+    return "/dev/ttyACM0"
 
 
-def open_tty(dev=DEV):
+def open_tty(dev=None):
+    if dev is None:
+        dev = get_dev()
     fd = os.open(dev, os.O_RDWR | os.O_NOCTTY)
     attrs = termios.tcgetattr(fd)
     attrs[2] |= termios.CLOCAL | termios.CREAD

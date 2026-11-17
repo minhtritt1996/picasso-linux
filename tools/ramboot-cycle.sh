@@ -48,6 +48,9 @@ case "$product" in
 			# ssh first (fast when the link is up), console as the fallback
 			ssh -i "$HOME/.ssh/picasso_key" -o BatchMode=yes -o ConnectTimeout=4 \
 				-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+				root@10.77.71.2 'reboot -f' >/dev/null 2>&1 ||
+			ssh -i "$HOME/.ssh/picasso_key" -o BatchMode=yes -o ConnectTimeout=4 \
+				-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
 				root@192.168.7.2 'reboot -f' >/dev/null 2>&1 ||
 				python3 tools/console_cmd.py --reboot >/dev/null 2>&1 || true
 			for _ in $(seq 1 80); do
@@ -85,8 +88,8 @@ stage "$PAYLOAD" payload
 
 say "oem run"
 timeout 30 fastboot oem run >/dev/null
-for _ in $(seq 1 120); do [ -e /dev/ttyACM0 ] && break; sleep 2; done
-if [ ! -e /dev/ttyACM0 ]; then
+for _ in $(seq 1 120); do ([ -e /dev/ttyACM0 ] || [ -e /dev/ttyACM1 ]) && break; sleep 2; done
+if [ ! -e /dev/ttyACM0 ] && [ ! -e /dev/ttyACM1 ]; then
 	say "no USB console after 240 s; check the panel"
 	exit 1
 fi

@@ -1,0 +1,47 @@
+diff --git a/drivers/video/backlight/qcom-wled.c b/drivers/video/backlight/qcom-wled.c
+index 650dd95f0..00e9c3eec 100644
+--- a/drivers/video/backlight/qcom-wled.c
++++ b/drivers/video/backlight/qcom-wled.c
+@@ -197,6 +197,7 @@ struct wled {
+ 	bool disabled_by_short;
+ 	bool has_short_detect;
+ 	bool cabc_disabled;
++	bool ovp_irq_disabled;
+ 	int short_irq;
+ 	int ovp_irq;
+ 
+@@ -294,7 +295,8 @@ static void wled_ovp_work(struct work_struct *work)
+ {
+ 	struct wled *wled = container_of(work,
+ 					 struct wled, ovp_work.work);
+-	enable_irq(wled->ovp_irq);
++	if (xchg(&wled->ovp_irq_disabled, false))
++		enable_irq(wled->ovp_irq);
+ }
+ 
+ static int wled_module_enable(struct wled *wled, int val)
+@@ -321,8 +323,10 @@ static int wled_module_enable(struct wled *wled, int val)
+ 			 */
+ 			schedule_delayed_work(&wled->ovp_work, HZ / 100);
+ 		} else {
+-			if (!cancel_delayed_work_sync(&wled->ovp_work))
+-				disable_irq(wled->ovp_irq);
++			if (!cancel_delayed_work_sync(&wled->ovp_work)) {
++				if (!xchg(&wled->ovp_irq_disabled, true))
++					disable_irq(wled->ovp_irq);
++			}
+ 		}
+ 	}
+ 
+@@ -1649,8 +1653,10 @@ static int wled_configure_ovp_irq(struct wled *wled,
+ 		return rc;
+ 
+ 	/* Keep OVP irq disabled until module is enabled */
+-	if (!(val & WLED3_CTRL_REG_MOD_EN_MASK))
++	if (!(val & WLED3_CTRL_REG_MOD_EN_MASK)) {
+ 		disable_irq(wled->ovp_irq);
++		wled->ovp_irq_disabled = true;
++	}
+ 
+ 	return 0;
+ }

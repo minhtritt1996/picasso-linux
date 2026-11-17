@@ -33,6 +33,7 @@
 #include <poll.h>
 #include <termios.h>
 #include <stdarg.h>
+#include <time.h>
 
 static int read_file(const char *path, char *buf, size_t len)
 {
@@ -636,32 +637,82 @@ static void seed_efs(const char *part, const char *dest, size_t max)
 	klog("efs: %s -> %s (%zu bytes)\n", part, dest, total);
 }
 
+static int write_text(const char *path, const char *text);
+
 /* The firmware lives on the phone's own partitions; the remoteproc/wifi probes
  * run before init mounts them, so bind the devices again afterwards. */
 static void mount_firmware(void)
 {
-	static const char pil[] = "/lib/firmware/qcom/sm7250/xiaomi/picasso";
+	static const char pil[] = "/lib/firmware/qcom/sm7250/xiaomi/picasso/image";
 	char dev[64];
 
+	mkdir_parents("/mnt/modem_fw");
+	mkdir_parents("/mnt/dsp_fw");
 	mkdir_parents(pil);
+	if (mount("tmpfs", pil, "tmpfs", 0, "mode=0755"))
+		klog("firmware: pil tmpfs failed: %s\n", strerror(errno));
+
 	if (find_part("modem", dev, sizeof(dev)) == 0) {
-		if (try_mount(dev, pil, "ext4") == 0)
+		if (try_mount(dev, "/mnt/modem_fw", "ext4") == 0)
 			klog("firmware: modem %s ext4\n", dev);
-		else if (try_mount(dev, pil, "vfat") == 0)
+		else if (try_mount(dev, "/mnt/modem_fw", "vfat") == 0)
 			klog("firmware: modem %s vfat\n", dev);
 		else
 			klog("firmware: modem %s mount failed: %s\n", dev, strerror(errno));
 	} else {
 		klog("firmware: no modem partition\n");
 	}
+	if (find_part("dsp", dev, sizeof(dev)) == 0) {
+		if (try_mount(dev, "/mnt/dsp_fw", "ext4") == 0 ||
+		    try_mount(dev, "/mnt/dsp_fw", "vfat") == 0)
+			klog("firmware: dsp %s mounted\n", dev);
+	}
+	{
+		static const char *const src_dirs[] = { "/mnt/modem_fw/image", "/mnt/dsp_fw/image" };
+		int k;
 
+		for (k = 0; k < (int)ARRAY_SIZE(src_dirs); k++) {
+			DIR *d = opendir(src_dirs[k]);
+			struct dirent *e;
+
+			if (!d)
+				continue;
+			while ((e = readdir(d)) != NULL) {
+				char src[320], dst[320];
+
+				if (e->d_name[0] == '.')
+					continue;
+				snprintf(src, sizeof(src), "%s/%s", src_dirs[k], e->d_name);
+				snprintf(dst, sizeof(dst), "%s/%s", pil, e->d_name);
+				(void)!symlink(src, dst);
+			}
+			closedir(d);
+		}
+		/* Xiaomi PD maps omit tms/pddump_disabled; declare it for modem/adsp/cdsp
+		 * so pd-mapper answers and modem's PD watchdog (dog_hal_common.c:180) does not fire. */
+		(void)!write_text("/lib/firmware/qcom/sm7250/xiaomi/picasso/image/tms-pddump-modem-root_pd.jsn",
+				  "{\n\t\"sr_domain\": {\n\t\t\"soc\": \"msm\",\n\t\t\"domain\": \"modem\",\n\t\t\"subdomain\": \"root_pd\",\n\t\t\"qmi_instance_id\": 180\n\t},\n\t\"sr_service\": [\n\t\t{ \"provider\": \"tms\", \"service\": \"pddump_disabled\" }\n\t]\n}\n");
+		(void)!write_text("/lib/firmware/qcom/sm7250/xiaomi/picasso/image/tms-pddump-adsp-audio_pd.jsn",
+				  "{\n\t\"sr_domain\": {\n\t\t\"soc\": \"msm\",\n\t\t\"domain\": \"adsp\",\n\t\t\"subdomain\": \"audio_pd\",\n\t\t\"qmi_instance_id\": 74\n\t},\n\t\"sr_service\": [\n\t\t{ \"provider\": \"tms\", \"service\": \"pddump_disabled\" }\n\t]\n}\n");
+		(void)!write_text("/lib/firmware/qcom/sm7250/xiaomi/picasso/image/tms-pddump-cdsp-root_pd.jsn",
+				  "{\n\t\"sr_domain\": {\n\t\t\"soc\": \"msm\",\n\t\t\"domain\": \"cdsp\",\n\t\t\"subdomain\": \"root_pd\",\n\t\t\"qmi_instance_id\": 76\n\t},\n\t\"sr_service\": [\n\t\t{ \"provider\": \"tms\", \"service\": \"pddump_disabled\" }\n\t]\n}\n");
+	}
+
+	mkdir_parents("/mnt/bt_fw");
 	mkdir_parents("/lib/firmware/qca");
 	if (find_part("bluetooth", dev, sizeof(dev)) == 0) {
-		if (try_mount(dev, "/lib/firmware/qca", "vfat") == 0 ||
-		    try_mount(dev, "/lib/firmware/qca", "ext4") == 0) {
-			klog("firmware: bluetooth %s mounted\n", dev);
-			list_dir("/lib/firmware/qca");
-			list_dir("/lib/firmware/qca/image");
+		if (try_mount(dev, "/mnt/bt_fw", "vfat") == 0 ||
+		    try_mount(dev, "/mnt/bt_fw", "ext4") == 0) {
+			struct stat st;
+			const char *src = (stat("/mnt/bt_fw/image", &st) == 0 && S_ISDIR(st.st_mode))
+					  ? "/mnt/bt_fw/image" : "/mnt/bt_fw";
+
+			if (mount(src, "/lib/firmware/qca", NULL, MS_BIND, NULL) == 0) {
+				klog("firmware: bluetooth %s bound from %s\n", dev, src);
+				list_dir("/lib/firmware/qca");
+			} else {
+				klog("firmware: bluetooth bind %s failed: %s\n", src, strerror(errno));
+			}
 		} else {
 			klog("firmware: bluetooth mount failed: %s\n", strerror(errno));
 		}
@@ -685,18 +736,55 @@ static void mount_firmware(void)
 		klog("firmware: no vendor partition\n");
 	}
 
+	/* Wire /readonly/... and /lib/firmware/<entry> + ath10k board.bin before
+	 * starting tqftpserv/pd-mapper/ath10k_snoc. */
+	{
+		DIR *d;
+		struct dirent *e;
+
+		mkdir_parents("/readonly/firmware");
+		mkdir_parents("/readonly/vendor/firmware_mnt");
+		mkdir_parents("/var/lib/tqftpserv/readonly/firmware");
+		(void)!symlink("/lib/firmware/qcom/sm7250/xiaomi/picasso/image",
+			       "/readonly/firmware/image");
+		(void)!symlink("/lib/firmware/qcom/sm7250/xiaomi/picasso/image",
+			       "/readonly/vendor/firmware_mnt/image");
+		(void)!symlink("/lib/firmware/qcom/sm7250/xiaomi/picasso/image",
+			       "/var/lib/tqftpserv/readonly/firmware/image");
+
+		d = opendir("/lib/firmware/qcom/sm7250/xiaomi/picasso/image");
+		if (d) {
+			while ((e = readdir(d)) != NULL) {
+				char src[320], dst[320];
+
+				if (e->d_name[0] == '.')
+					continue;
+				snprintf(src, sizeof(src),
+					 "/lib/firmware/qcom/sm7250/xiaomi/picasso/image/%s",
+					 e->d_name);
+				snprintf(dst, sizeof(dst), "/lib/firmware/%s", e->d_name);
+				(void)!symlink(src, dst);
+			}
+			closedir(d);
+		}
+		mkdir_parents("/lib/firmware/ath10k/WCN3990/hw1.0");
+		if (access("/lib/firmware/qcom/sm7250/xiaomi/picasso/image/bdf_g7a.bin", R_OK) == 0)
+			(void)!symlink("/lib/firmware/qcom/sm7250/xiaomi/picasso/image/bdf_g7a.bin",
+				       "/lib/firmware/ath10k/WCN3990/hw1.0/board.bin");
+		else
+			(void)!symlink("/lib/firmware/qcom/sm7250/xiaomi/picasso/image/bdwlan.bin",
+				       "/lib/firmware/ath10k/WCN3990/hw1.0/board.bin");
+	}
+
 	scan_logdump();
 	list_parts();
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso");
 	list_dir("/lib/firmware/qcom/sm7250/xiaomi/picasso/image");
 	list_devices("remoteproc");
 	list_devices("wifi");
-	/* the BT serdev probed before the bluetooth partition was mounted */
-	rebind("qcom_geni_serial", "894000.serial");
-	rebind("qcom_q6v5_pas", "4080000.remoteproc");
-	rebind("ath10k_snoc", "18800000.wifi");
-	/* rmtfs (EFS) and pd-mapper (PD map) must run before the modem boots;
-	 * their stderr goes to /dev/kmsg so the RAM log carries it. */
+	/* rmtfs (EFS), pd-mapper (PD map), and tqftpserv must run BEFORE the
+	 * modem/wifi rebind so the modem sees tms/pddump_disabled and wlanmdsp.mbn
+	 * on its very first boot. */
 	{
 		seed_efs("modemst1", "/run/rmtfs/modem_fs1", 8 << 20);
 		seed_efs("modemst2", "/run/rmtfs/modem_fs2", 8 << 20);
@@ -734,6 +822,11 @@ static void mount_firmware(void)
 		klog("service: rmtfs_mem1 %s\n",
 		     access("/dev/qcom_rmtfs_mem1", R_OK | W_OK) == 0 ? "present" : "missing");
 	}
+	/* Now rebind BT, modem remoteproc, and wifi after firmware & QRTR services are up */
+	rebind("qcom_geni_serial", "894000.serial");
+	rebind("qcom_q6v5_pas", "4080000.remoteproc");
+	rebind("ath10k_snoc", "18800000.wifi");
+	rebind("qcom-venus", "aa00000.video-codec");
 
 	/* start the ADSP (audio) if the board enabled it */
 	{
@@ -843,6 +936,113 @@ static void mount_firmware(void)
 /* ---------------------------------------------------------------- UFS root */
 
 /*
+ * The console child keeps its own root, so after the hand-over its absolute
+ * paths would still be the ramdisk's. It therefore gets a handle to the new
+ * tree (root_dfd) and a byte on switch_pipe once PID 1 has moved it into place:
+ * from then on it re-chroots and is a shell *inside* the system on UFS, which is
+ * the only way to look at a boot that has no network yet.
+ */
+/*
+ * Boot log that survives a failed hand-over: the log lives on the system's own
+ * partition (picasso-init.log at its root), the descriptor is opened before
+ * switch_root and stays valid afterwards, and every boot first prints the tail
+ * of the previous one, so a boot that loses its console still explains itself.
+ */
+#define BOOTLOG "picasso-init.log"
+static int bootlog_fd = -1;
+
+static void blog(const char *fmt, ...)
+{
+	char buf[512];
+	struct timespec ts;
+	va_list ap;
+	int n;
+
+	if (bootlog_fd < 0)
+		return;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	n = snprintf(buf, sizeof(buf), "[%ld.%03ld] ", (long)ts.tv_sec,
+		     ts.tv_nsec / 1000000);
+	va_start(ap, fmt);
+	n += vsnprintf(buf + n, sizeof(buf) - (size_t)n, fmt, ap);
+	va_end(ap);
+	if (n > 0)
+		(void)!write(bootlog_fd, buf, (size_t)n);
+}
+
+static void bootlog_open(const char *path)
+{
+	bootlog_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (bootlog_fd < 0)
+		klog("bootlog: %s: %s\n", path, strerror(errno));
+}
+
+/* print the tail of the previous boot's log to the kernel log (the panel) */
+static void bootlog_dump(const char *path)
+{
+	char buf[4096];
+	int fd = open(path, O_RDONLY), n;
+
+	if (fd < 0) {
+		klog("bootlog: no %s from the previous boot\n", path);
+		return;
+	}
+	n = (int)lseek(fd, 0, SEEK_END);
+	if (n > (int)sizeof(buf) - 1)
+		lseek(fd, -(off_t)(sizeof(buf) - 1), SEEK_END);
+	else
+		lseek(fd, 0, SEEK_SET);
+	n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0)
+		return;
+	buf[n] = 0;
+	klog("bootlog: previous boot, tail of %s:\n%s\n", path, buf);
+}
+
+static int root_dfd = -1;
+static int switch_pipe[2] = { -1, -1 };
+static int console_switched;
+static pid_t auto_reboot_pid = -1;
+
+static void console_enter_new_root(void)
+{
+	if (console_switched)
+		return;
+	/* log through /denial first: the child was forked before switchroot, so
+	 * root_dfd is only valid in PID 1. /denial is the bind mount of the new root. */
+	if (bootlog_fd < 0) {
+		if (root_dfd >= 0)
+			bootlog_fd = openat(root_dfd, BOOTLOG, O_WRONLY | O_CREAT | O_APPEND, 0644);
+		else
+			bootlog_fd = open("/denial/" BOOTLOG, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	}
+	blog("console: entering the new root (dfd %d)\n", root_dfd);
+	klog("console: entering the new root (dfd %d)\n", root_dfd);
+	if (chdir("/denial")) {
+		if (root_dfd >= 0 && fchdir(root_dfd) == 0) {
+			/* ok via root_dfd */
+		} else {
+			blog("console: chdir /denial failed: %s\n", strerror(errno));
+			klog("console: chdir /denial failed: %s\n", strerror(errno));
+			return;
+		}
+	}
+	blog("console: cwd on the new root, chroot\n");
+	if (chroot(".")) {
+		blog("console: chroot failed: %s\n", strerror(errno));
+		klog("console: chroot failed: %s\n", strerror(errno));
+		return;
+	}
+	blog("console: chroot ok\n");
+	(void)!chdir("/");
+	console_switched = 1;
+	bootlog_open("/" BOOTLOG);
+	blog("console: inside the system on UFS, commands follow\n");
+	klog("console: now inside the system on UFS\n");
+}
+
+/*
  * Booting an installed system instead of this ramdisk. The image on the
  * partition is self-describing: /usr/lib/phonewave-system/root marks a system
  * that wants to be booted this way (docs/denial-mobile-architecture.md). Which
@@ -898,6 +1098,91 @@ static int write_text(const char *path, const char *text)
  *    KEY_POWER then powers the phone off right after the resume. A short press
  *    should sleep, a long press still powers off.
  */
+/*
+ * ECM, created from inside the system on UFS. The unit is pulled in by
+ * systemd-networkd (which needs the interface anyway) and lives in /run, so the
+ * image stays untouched and upgrade-clean.
+ */
+static void write_ecm_unit(const char *newroot)
+{
+	static const char script[] =
+		"#!/bin/sh\n"
+		"exec >>/picasso-init.log 2>&1\n"
+		"echo \"[usb-ecm] starting at $(date -Iseconds 2>/dev/null || date)...\"\n"
+		"G=/sys/kernel/config/usb_gadget/g1\n"
+		"if [ ! -d \"$G\" ]; then\n"
+		"  echo \"[usb-ecm] no gadget dir $G\"\n"
+		"  exit 0\n"
+		"fi\n"
+		"if [ -e \"$G/configs/c.1/ecm.usb0\" ]; then\n"
+		"  echo \"[usb-ecm] ecm already linked\"\n"
+		"  exit 0\n"
+		"fi\n"
+		"UDC=$(cat \"$G/UDC\" 2>/dev/null || true)\n"
+		"echo \"[usb-ecm] current UDC: '$UDC'\"\n"
+		"if [ -n \"$UDC\" ]; then\n"
+		"  echo \"[usb-ecm] clearing UDC before configfs link\"\n"
+		"  echo \"\" > \"$G/UDC\"\n"
+		"  sleep 0.2\n"
+		"fi\n"
+		"mkdir -p \"$G/functions/ecm.usb0\"\n"
+		"echo 02:00:00:00:00:02 > \"$G/functions/ecm.usb0/dev_addr\"\n"
+		"echo 02:00:00:00:00:01 > \"$G/functions/ecm.usb0/host_addr\"\n"
+		"if ! ln -sf \"$G/functions/ecm.usb0\" \"$G/configs/c.1/ecm.usb0\"; then\n"
+		"  echo \"[usb-ecm] ln -sf failed\"\n"
+		"  exit 1\n"
+		"fi\n"
+		"echo \"[usb-ecm] ecm linked into c.1\"\n"
+		"if [ -n \"$UDC\" ]; then\n"
+		"  echo \"$UDC\" > \"$G/UDC\"\n"
+		"  echo \"[usb-ecm] rebound UDC $UDC\"\n"
+		"fi\n"
+		"for i in 1 2 3 4 5 6 7 8 9 10; do\n"
+		"  if [ -e /sys/class/net/usb0 ]; then break; fi\n"
+		"  sleep 0.2\n"
+		"done\n"
+		"if ip link set usb0 up 2>&1; then\n"
+		"  echo \"[usb-ecm] usb0 up\"\n"
+		"else\n"
+		"  echo \"[usb-ecm] ip link set usb0 up failed\"\n"
+		"fi\n"
+		"echo \"[usb-ecm] done, usb0: $(ip addr show dev usb0 2>&1 || true)\"\n"
+		"exit 0\n";
+	static const char unit[] =
+		"[Unit]\n"
+		"Description=USB ECM link for the host (added by the picasso ramdisk)\n"
+		"DefaultDependencies=no\n"
+		"ConditionPathExists=/sys/kernel/config/usb_gadget/g1\n"
+		"Before=systemd-networkd.service\n"
+		"[Service]\n"
+		"Type=oneshot\n"
+		"RemainAfterExit=yes\n"
+		"ExecStart=/bin/sh /run/usb-ecm.sh\n";
+	char p[192], link[192];
+
+	snprintf(p, sizeof(p), "%s/run/usb-ecm.sh", newroot);
+	if (write_text(p, script))
+		klog("root: usb-ecm.sh failed: %s\n", strerror(errno));
+	chmod(p, 0755);
+
+	snprintf(p, sizeof(p), "%s/run/systemd/system", newroot);
+	mkdir_parents(p);
+	snprintf(p, sizeof(p), "%s/run/systemd/system/usb-ecm.service", newroot);
+	if (write_text(p, unit))
+		klog("root: usb-ecm.service failed: %s\n", strerror(errno));
+
+	/* enabled by hand: the image's networkd pulls it in */
+	snprintf(p, sizeof(p), "%s/run/systemd/system/systemd-networkd.service.wants",
+		 newroot);
+	mkdir_parents(p);
+	snprintf(link, sizeof(link), "%s/run/systemd/system/systemd-networkd.service.wants/usb-ecm.service",
+		 newroot);
+	if (symlink("/run/systemd/system/usb-ecm.service", link) && errno != EEXIST)
+		klog("root: usb-ecm wants link failed: %s\n", strerror(errno));
+	else
+		klog("root: usb-ecm unit written\n");
+}
+
 static void write_device_dropins(const char *newroot)
 {
 	static const char hexagon[] =
@@ -906,9 +1191,11 @@ static void write_device_dropins(const char *newroot)
 		"ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R /run/hexagonrpcd\n";
 	static const char logind[] =
 		"[Login]\n"
-		"HandlePowerKey=suspend\n"
+		"HandlePowerKey=ignore\n"
 		"HandlePowerKeyLongPress=poweroff\n";
-	char p[192];
+	static const char picasso_ssh_key[] =
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC0dn7SkqrF1jht4xYhXYtTyG3o6cTCFwKh0Y2kh1Kr/ picasso\n";
+	char p[192], link[192];
 
 	snprintf(p, sizeof(p), "%s/run/systemd/system/hexagonrpcd.service.d", newroot);
 	mkdir_parents(p);
@@ -919,6 +1206,15 @@ static void write_device_dropins(const char *newroot)
 	else
 		klog("root: hexagonrpcd drop-in written\n");
 
+	/* Enable hexagonrpcd in multi-user.target.wants */
+	snprintf(p, sizeof(p), "%s/run/systemd/system/multi-user.target.wants", newroot);
+	mkdir_parents(p);
+	snprintf(link, sizeof(link), "%s/run/systemd/system/multi-user.target.wants/hexagonrpcd.service", newroot);
+	if (symlink("/usr/lib/systemd/system/hexagonrpcd.service", link) && errno != EEXIST)
+		klog("root: hexagonrpcd wants link failed: %s\n", strerror(errno));
+	else
+		klog("root: hexagonrpcd enabled in multi-user.target.wants\n");
+
 	snprintf(p, sizeof(p), "%s/run/systemd/logind.conf.d", newroot);
 	mkdir_parents(p);
 	snprintf(p, sizeof(p), "%s/run/systemd/logind.conf.d/10-picasso-powerkey.conf",
@@ -927,6 +1223,174 @@ static void write_device_dropins(const char *newroot)
 		klog("root: logind drop-in failed: %s\n", strerror(errno));
 	else
 		klog("root: logind power-key policy written\n");
+
+	/* SSH authorized_keys for root */
+	snprintf(p, sizeof(p), "%s/root/.ssh", newroot);
+	mkdir_parents(p);
+	chmod(p, 0700);
+	snprintf(p, sizeof(p), "%s/root/.ssh/authorized_keys", newroot);
+	if (write_text(p, picasso_ssh_key))
+		klog("root: root authorized_keys failed: %s\n", strerror(errno));
+	else {
+		chmod(p, 0600);
+		klog("root: root authorized_keys written\n");
+	}
+
+	/* Flashed authorized_keys for first-user */
+	snprintf(p, sizeof(p), "%s/var/lib/phonewave-system/flashed", newroot);
+	mkdir_parents(p);
+	chmod(p, 0755);
+	snprintf(p, sizeof(p), "%s/var/lib/phonewave-system/flashed/authorized_keys", newroot);
+	if (write_text(p, picasso_ssh_key))
+		klog("root: flashed authorized_keys failed: %s\n", strerror(errno));
+	else {
+		chmod(p, 0644);
+		klog("root: flashed authorized_keys written\n");
+	}
+
+	/* Audio UCM2 override in /run/alsa-ucm2 for PipeWire/WirePlumber */
+	{
+		static const char wp_env[] =
+			"[Service]\n"
+			"Environment=ALSA_CONFIG_UCM2=/run/alsa-ucm2\n"
+			"Environment=XDG_CONFIG_DIRS=/run:/etc/xdg\n";
+		static const char wp_alsa[] =
+			"monitor.alsa.rules = [\n"
+			"  {\n"
+			"    matches = [\n"
+			"      { node.name = \"~alsa_output.*\" }\n"
+			"    ]\n"
+			"    actions = {\n"
+			"      update-props = {\n"
+			"        audio.format = \"S16LE\"\n"
+			"        audio.rate = 48000\n"
+			"        audio.channels = 2\n"
+			"      }\n"
+			"    }\n"
+			"  }\n"
+			"]\n";
+		static const char ucm_hifi[] =
+			"SectionVerb {\n"
+			"\tEnableSequence [\n"
+			"\t\tcset \"name='SEC_MI2S_RX Audio Mixer MultiMedia1' 1\"\n"
+			"\t\tcset \"name='Speaker Playback Volume' 7\"\n"
+			"\t]\n"
+			"\tDisableSequence [\n"
+			"\t\tcset \"name='SEC_MI2S_RX Audio Mixer MultiMedia1' 0\"\n"
+			"\t]\n"
+			"\tValue {\n"
+			"\t\tTQ \"HiFi\"\n"
+			"\t}\n"
+			"}\n"
+			"SectionDevice.\"Speaker\" {\n"
+			"\tComment \"Speaker\"\n"
+			"\tValue {\n"
+			"\t\tPlaybackPriority 100\n"
+			"\t\tPlaybackPCM \"hw:${CardId},0\"\n"
+			"\t\tPlaybackMixerElem \"Speaker\"\n"
+			"\t}\n"
+			"}\n";
+		static const char ucm_top[] =
+			"Syntax 3\n"
+			"SectionUseCase.\"HiFi\" {\n"
+			"\tFile \"/Qualcomm/sm8250/Picasso-HiFi.conf\"\n"
+			"\tComment \"HiFi quality Music.\"\n"
+			"}\n";
+		static const char ucm_svc[] =
+			"[Unit]\n"
+			"Description=Overlay ALSA UCM2 profile for picasso in /run\n"
+			"DefaultDependencies=no\n"
+			"Before=sound.target\n"
+			"[Service]\n"
+			"Type=oneshot\n"
+			"RemainAfterExit=yes\n"
+			"ExecStart=/bin/sh -c 'cp -rn /usr/share/alsa/ucm2/. /run/alsa-ucm2/'\n";
+
+		snprintf(p, sizeof(p), "%s/run/systemd/user/wireplumber.service.d", newroot);
+		mkdir_parents(p);
+		snprintf(p, sizeof(p), "%s/run/systemd/user/wireplumber.service.d/ucm2.conf", newroot);
+		(void)!write_text(p, wp_env);
+
+		snprintf(p, sizeof(p), "%s/run/wireplumber/wireplumber.conf.d", newroot);
+		mkdir_parents(p);
+		snprintf(p, sizeof(p), "%s/run/wireplumber/wireplumber.conf.d/50-picasso-alsa.conf", newroot);
+		(void)!write_text(p, wp_alsa);
+
+		snprintf(p, sizeof(p), "%s/home/picasso/.config", newroot);
+		if (access(p, F_OK) == 0) {
+			snprintf(p, sizeof(p), "%s/home/picasso/.config/chromium-flags.conf", newroot);
+			if (access(p, F_OK) != 0) {
+				(void)!write_text(p,
+					"--ozone-platform=wayland\n"
+					"--enable-features=UseOzonePlatform,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL\n"
+					"--ignore-gpu-blocklist\n"
+					"--enable-gpu-rasterization\n"
+					"--enable-zero-copy\n");
+				chown(p, 1000, 1000);
+			}
+		}
+
+		snprintf(p, sizeof(p), "%s/run/alsa-ucm2/Qualcomm/sm8250", newroot);
+		mkdir_parents(p);
+		snprintf(p, sizeof(p), "%s/run/alsa-ucm2/Qualcomm/sm8250/Picasso-HiFi.conf", newroot);
+		(void)!write_text(p, ucm_hifi);
+
+		snprintf(p, sizeof(p), "%s/run/alsa-ucm2/conf.d/sm8250", newroot);
+		mkdir_parents(p);
+		snprintf(p, sizeof(p), "%s/run/alsa-ucm2/conf.d/sm8250/Xiaomi-RedmiK305G-picasso-G7AE.conf", newroot);
+		(void)!write_text(p, ucm_top);
+		snprintf(link, sizeof(link), "%s/run/alsa-ucm2/conf.d/sm8250/Xiaomi-Redmi-K30-5G.conf", newroot);
+		(void)!symlink("Xiaomi-RedmiK305G-picasso-G7AE.conf", link);
+
+		snprintf(p, sizeof(p), "%s/run/systemd/system/picasso-ucm2.service", newroot);
+		(void)!write_text(p, ucm_svc);
+		snprintf(link, sizeof(link), "%s/run/systemd/system/multi-user.target.wants/picasso-ucm2.service", newroot);
+		(void)!symlink("/run/systemd/system/picasso-ucm2.service", link);
+		klog("root: alsa-ucm2 + wireplumber drop-in written\n");
+	}
+
+	/* 45-minute safety watchdog timer inside Denial */
+	{
+		char p[256], link[256];
+		static const char wd_svc[] =
+			"[Unit]\n"
+			"Description=Picasso 45-minute safety watchdog reset\n"
+			"[Service]\n"
+			"Type=oneshot\n"
+			"ExecStart=/bin/sh -c 'sync; echo b > /proc/sysrq-trigger; reboot -f'\n";
+		static const char wd_tmr[] =
+			"[Unit]\n"
+			"Description=Picasso 45-minute safety watchdog timer\n"
+			"[Timer]\n"
+			"OnBootSec=45min\n"
+			"Unit=picasso-watchdog.service\n"
+			"[Install]\n"
+			"WantedBy=timers.target\n";
+
+		snprintf(p, sizeof(p), "%s/run/systemd/system/picasso-watchdog.service", newroot);
+		(void)!write_text(p, wd_svc);
+		snprintf(p, sizeof(p), "%s/run/systemd/system/picasso-watchdog.timer", newroot);
+		(void)!write_text(p, wd_tmr);
+		snprintf(p, sizeof(p), "%s/run/systemd/system/timers.target.wants", newroot);
+		mkdir_parents(p);
+		snprintf(link, sizeof(link), "%s/run/systemd/system/timers.target.wants/picasso-watchdog.timer", newroot);
+		(void)!symlink("/run/systemd/system/picasso-watchdog.timer", link);
+		klog("root: picasso-watchdog.timer (45min) enabled\n");
+	}
+
+	/* Allow sshd on both USB (10.77.71.2) and Wi-Fi (wlan0) */
+	{
+		char src[256], dst[256];
+
+		snprintf(src, sizeof(src), "%s/run/11-phone-usb.conf", newroot);
+		snprintf(dst, sizeof(dst), "%s/etc/ssh/sshd_config.d/11-phone-usb.conf", newroot);
+		if (access(dst, F_OK) == 0 && write_text(src, "ListenAddress 0.0.0.0\n") == 0) {
+			if (mount(src, dst, NULL, MS_BIND, NULL) == 0)
+				klog("root: sshd ListenAddress 0.0.0.0 bound\n");
+			else
+				klog("root: sshd bind mount failed: %s\n", strerror(errno));
+		}
+	}
 }
 
 /* The stock firmware partitions are mounted in this ramdisk; the new root must
@@ -934,8 +1398,12 @@ static void write_device_dropins(const char *newroot)
 static void bind_firmware(const char *newroot)
 {
 	static const char *const dirs[] = {
-		"/lib/firmware/qcom/sm7250/xiaomi/picasso",
+		"/mnt/modem_fw",
+		"/mnt/dsp_fw",
+		"/lib/firmware/qcom/sm7250/xiaomi/picasso/image",
 		"/lib/firmware/qca",
+		"/lib/firmware/ath10k",
+		"/lib/firmware/novatek",
 		"/vendor",
 	};
 	char dst[192];
@@ -944,10 +1412,31 @@ static void bind_firmware(const char *newroot)
 	for (i = 0; i < (int)ARRAY_SIZE(dirs); i++) {
 		snprintf(dst, sizeof(dst), "%s%s", newroot, dirs[i]);
 		mkdir_parents(dst);
-		if (mount(dirs[i], dst, NULL, MS_BIND, NULL))
+		if (mount(dirs[i], dst, NULL, MS_BIND | MS_REC, NULL))
 			klog("root: bind %s: %s\n", dirs[i], strerror(errno));
 		else
 			klog("root: bound %s\n", dirs[i]);
+	}
+}
+
+static void create_partlabel_symlinks(void)
+{
+	const char *const parts[] = { "super", "persist" };
+	char dev[64], link[128];
+	int i;
+
+	mkdir_parents("/dev/disk/by-partlabel");
+	for (i = 0; i < (int)ARRAY_SIZE(parts); i++) {
+		if (find_part(parts[i], dev, sizeof(dev)) == 0) {
+			snprintf(link, sizeof(link), "/dev/disk/by-partlabel/%s", parts[i]);
+			unlink(link);
+			if (symlink(dev, link) == 0)
+				klog("partlabel: %s -> %s\n", parts[i], dev);
+			else
+				klog("partlabel: %s -> %s failed: %s\n", parts[i], dev, strerror(errno));
+		} else {
+			klog("partlabel: part %s not found\n", parts[i]);
+		}
 	}
 }
 
@@ -974,13 +1463,21 @@ static int switch_to_partition(const char *part)
 		return -1;
 	}
 	klog("root: %s (%s) is the system, switching to it\n", part, dev);
+	bootlog_dump("/newroot/" BOOTLOG);
+	bootlog_open("/newroot/" BOOTLOG);
+	blog("boot: switching to %s (%s)\n", part, dev);
+	/* O_RDONLY, not O_PATH: the console child fchdir()s through it */
+	root_dfd = open("/newroot", O_RDONLY | O_DIRECTORY);
 
 	/* systemd wants /run to be a tmpfs already; ours carries the drop-ins */
 	mkdir("/newroot/run", 0755);
 	if (mount("tmpfs", "/newroot/run", "tmpfs", 0, "mode=0755"))
 		klog("root: /run tmpfs failed: %s\n", strerror(errno));
 	write_device_dropins("/newroot");
+	write_ecm_unit("/newroot");
 	bind_firmware("/newroot");
+
+	create_partlabel_symlinks();
 
 	{
 		static const char *const moves[] = { "dev", "proc", "sys" };
@@ -991,10 +1488,19 @@ static int switch_to_partition(const char *part)
 			snprintf(src, sizeof(src), "/%s", moves[i]);
 			snprintf(dst, sizeof(dst), "/newroot/%s", moves[i]);
 			mkdir(dst, 0755);
-			if (mount(src, dst, NULL, MS_MOVE, NULL))
-				klog("root: move /%s: %s\n", moves[i], strerror(errno));
+			if (mount(src, dst, NULL, MS_BIND | MS_REC, NULL))
+				klog("root: bind /%s: %s\n", moves[i], strerror(errno));
 		}
 	}
+
+	/*
+	 * The console child was forked long before this mount existed.
+	 * Bind /newroot recursively to /denial AFTER moving /dev, /proc, /sys
+	 * so /denial carries /dev (with devtmpfs/ttyGS0), /proc, /sys, /run.
+	 */
+	mkdir("/denial", 0755);
+	if (mount("/newroot", "/denial", NULL, MS_BIND | MS_REC, NULL))
+		klog("root: bind /denial: %s\n", strerror(errno));
 
 	if (chdir("/newroot"))
 		return -1;
@@ -1006,7 +1512,19 @@ static int switch_to_partition(const char *part)
 		klog("root: chroot: %s\n", strerror(errno));
 		return -1;
 	}
-	chdir("/");
+	(void)!chdir("/");
+	if (switch_pipe[1] >= 0) {
+		ssize_t w = write(switch_pipe[1], "x", 1);
+
+		blog("boot: pipe signalled (%zd, %s)\n", w, w < 0 ? strerror(errno) : "ok");
+		close(switch_pipe[1]);
+	} else {
+		blog("boot: no pipe to signal\n");
+	}
+	if (auto_reboot_pid > 0) {
+		kill(auto_reboot_pid, SIGKILL);
+		auto_reboot_pid = -1;
+	}
 	klog("root: exec /usr/lib/systemd/systemd\n");
 	execv("/usr/lib/systemd/systemd", argv);
 	klog("root: exec failed: %s\n", strerror(errno));
@@ -1018,13 +1536,25 @@ static void try_udev_root(void)
 	char part[64];
 	int tried = 0;
 
-	/*
-	 * Opt-in while the boot of the image on UFS is still being brought up:
-	 * a plain boot stays in this ramdisk, where the console and the ECM link
-	 * are known to work. Add picasso.switchroot=1 to hand over to Denial.
-	 */
-	if (!cmdline_flag("picasso.switchroot"))
+	/* the system on UFS is the default; picasso.noswitch keeps the ramdisk,
+	 * but still shows what the last hand-over wrote to its boot log */
+	if (cmdline_flag("picasso.noswitch")) {
+		const char *parts[] = { "denial", "linux" };
+		char dev[64];
+		int i;
+
+		for (i = 0; i < (int)ARRAY_SIZE(parts); i++) {
+			if (find_part(parts[i], dev, sizeof(dev)) < 0)
+				continue;
+			mkdir("/oldroot", 0755);
+			if (mount(dev, "/oldroot", "ext4", MS_RDONLY, NULL))
+				continue;
+			bootlog_dump("/oldroot/" BOOTLOG);
+			umount("/oldroot");
+			break;
+		}
 		return;
+	}
 	cmdline_value("picasso.root=", part, sizeof(part));
 	if (part[0] && !switch_to_partition(part)) {
 		tried = 1;
@@ -1178,8 +1708,14 @@ static void gadget_setup(void)
 	mkdir("/sys/kernel/config/usb_gadget/g1/functions/acm.GS0", 0755);
 	symlink("/sys/kernel/config/usb_gadget/g1/functions/acm.GS0",
 		"/sys/kernel/config/usb_gadget/g1/configs/c.1/acm.GS0");
-	/* ACM is the console, ECM the link the system on UFS expects */
-	ecm_setup();
+	/*
+	 * ACM is the console and always stays. ECM is added by the system on
+	 * UFS itself (see write_ecm_unit) when we are about to hand over: with
+	 * ECM already present, the hand-over left the controller dead on this
+	 * port, and a dead gadget means no way back in.
+	 */
+	if (cmdline_flag("picasso.noswitch"))
+		ecm_setup();
 
 	/* the controller (and its UDC) can appear late */
 	for (int i = 0; i < 60; i++) {
@@ -1220,6 +1756,7 @@ static void gadget_setup(void)
 
 static void cmd(int fd, char *line)
 {
+	blog("console cmd: %s\n", line);
 	char buf[4096];
 	int n;
 
@@ -1568,6 +2105,40 @@ static void cmd(int fd, char *line)
 		} else {
 			dprintf(fd, "tone: fork failed\n");
 		}
+	} else if (!strncmp(line, "run ", 4)) {
+		/*
+		 * Run a program of the system we may be inside of, on this tty and
+		 * in the foreground: `run ip addr`, `run journalctl -u sshd`.
+		 * Forked on purpose - exec'ing a shell here would take the console
+		 * away for good once that shell exits.
+		 */
+		char *argv[9];
+		int argc = 0, st = 0;
+		char *tok = strtok(line + 4, " ");
+		pid_t pid;
+
+		while (tok && argc < 8) {
+			argv[argc++] = tok;
+			tok = strtok(NULL, " ");
+		}
+		argv[argc] = NULL;
+		if (!argc) {
+			dprintf(fd, "run: what?\n");
+			return;
+		}
+		pid = fork();
+		if (pid == 0) {
+			dup2(fd, 0);
+			dup2(fd, 1);
+			dup2(fd, 2);
+			execvp(argv[0], argv);
+			dprintf(fd, "run: %s: %s\n", argv[0], strerror(errno));
+			_exit(127);
+		}
+		if (pid > 0) {
+			waitpid(pid, &st, 0);
+			dprintf(fd, "run: %s exited %d\n", argv[0], WEXITSTATUS(st));
+		}
 	} else if (!strcmp(line, "ecm")) {
 		/*
 		 * Bring the network function up on a bound gadget: unbind the
@@ -1655,6 +2226,19 @@ static void console_loop(void)
 	int fd;
 
 	for (;;) {
+		/* did PID 1 move the system on UFS into place? */
+		if (switch_pipe[0] >= 0) {
+			struct pollfd q = { .fd = switch_pipe[0], .events = POLLIN };
+
+			if (poll(&q, 1, 0) > 0) {
+				char b;
+
+				(void)!read(switch_pipe[0], &b, 1);
+				close(switch_pipe[0]);
+				switch_pipe[0] = -1;
+				console_enter_new_root();
+			}
+		}
 		fd = open("/dev/ttyGS0", O_RDWR | O_NOCTTY | O_NONBLOCK);
 		if (fd < 0) {
 			sleep(1);
@@ -1670,20 +2254,47 @@ static void console_loop(void)
 			}
 			tcflush(fd, TCIFLUSH);
 		}
-		dprintf(fd, "\nmainline picasso console (help for commands)\npicasso> ");
+		dprintf(fd, "\nmainline picasso console (help for commands)%s\npicasso> ",
+			console_switched ? " [on UFS]" : "");
 		len = 0;
 		for (;;) {
-			struct pollfd p = { .fd = fd, .events = POLLIN };
+			struct pollfd p[2];
+			int np = 1;
 			char c;
-			ssize_t n = poll(&p, 1, 10000);
+			ssize_t n;
+
+			p[0].fd = fd;
+			p[0].events = POLLIN;
+			p[0].revents = 0;
+			if (switch_pipe[0] >= 0) {
+				p[1].fd = switch_pipe[0];
+				p[1].events = POLLIN;
+				p[1].revents = 0;
+				np = 2;
+			}
+			n = poll(p, np, 5000);
 
 			if (n == 0) {
 				dprintf(fd, "\npicasso> ");
 				continue;
 			}
-			if (n < 0 || (p.revents & (POLLERR | POLLHUP)))
+			if (n < 0) {
+				if (errno == EINTR)
+					continue;
 				break;
-			if (!(p.revents & POLLIN))
+			}
+			if (np > 1 && (p[1].revents & (POLLIN | POLLHUP | POLLERR))) {
+				char b;
+
+				(void)!read(switch_pipe[0], &b, sizeof(b));
+				close(switch_pipe[0]);
+				switch_pipe[0] = -1;
+				console_enter_new_root();
+				dprintf(fd, "\nconsole: inside the system on UFS\npicasso> ");
+			}
+			if (p[0].revents & (POLLERR | POLLHUP))
+				break;
+			if (!(p[0].revents & POLLIN))
 				continue;
 			n = read(fd, &c, 1);
 			if (n < 0) {
@@ -1754,6 +2365,13 @@ int main(void)
 	fflush(NULL);
 	klog("picasso-init: after pstore\n");
 
+	/* the console child follows PID 1 into the system on UFS (see
+	 * console_enter_new_root); the pipe is how it learns that it happened */
+	if (pipe(switch_pipe)) {
+		switch_pipe[0] = -1;
+		switch_pipe[1] = -1;
+	}
+
 	if (fork() == 0) {
 		printf("init: console child started\n");
 		fflush(NULL);
@@ -1772,28 +2390,45 @@ int main(void)
 	/* auto_reboot=<seconds>: a software reset keeps DDR, so the loader can
 	 * hand the console log to the host on the next start */
 	{
-		/* safety: come back to the loader after five minutes, so a lost USB
+		/* safety: come back to the loader after 45 minutes, so a lost USB
 		 * link cannot leave the phone running Linux with no way in */
 		int rs = cmdline_seconds("auto_reboot=");
 
 		if (rs < 0)
-			rs = 300;
-		if (rs > 0 && fork() == 0) {
-			sleep((unsigned)rs);
-			/* no klog here: a stuck console write must not hold up
-			 * the reset path */
-			sync();
-			/* device shutdown hangs on some blocks here; sysrq-b restarts
-			 * without running the shutdown handlers */
-			{
-				int f = open("/proc/sysrq-trigger", O_WRONLY);
+			rs = 2700;
+		if (rs > 0) {
+			auto_reboot_pid = fork();
+			if (auto_reboot_pid == 0) {
+				int elapsed = 0;
+				struct stat pet_st;
+				time_t last_pet = 0;
 
-				if (f >= 0) {
-					(void)!write(f, "b", 1);
-					close(f);
+				if (stat("/run/picasso-watchdog-pet", &pet_st) == 0)
+					last_pet = pet_st.st_mtime;
+				while (elapsed < rs) {
+					sleep(15);
+					elapsed += 15;
+					if (access("/run/picasso-reboot-now", F_OK) == 0 ||
+					    access("/proc/1/stat", F_OK) != 0)
+						break;
+					if (stat("/run/picasso-watchdog-pet", &pet_st) == 0 &&
+					    pet_st.st_mtime != last_pet) {
+						last_pet = pet_st.st_mtime;
+						elapsed = 0;
+					}
 				}
+				klog("picasso-watchdog: %d s timer expired, resetting to loader\n", rs);
+				sync();
+				{
+					int f = open("/proc/sysrq-trigger", O_WRONLY);
+
+					if (f >= 0) {
+						(void)!write(f, "b", 1);
+						close(f);
+					}
+				}
+				reboot(RB_AUTOBOOT);
 			}
-			reboot(RB_AUTOBOOT);
 		}
 	}
 

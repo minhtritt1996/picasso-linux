@@ -26,3 +26,8 @@ picasso/0008-bluetooth-hci-qca-wcn3991-flow-control.patch
 picasso/0009-drm-msm-a6xx-fix-opp-use-after-free.patch
 picasso/0010-drm-msm-a6xx-fix-rpmh-dependency-votes.patch
 picasso/0011-input-picasso-nvt-sram-firmware.patch
+picasso/0011-net-qrtr-ns-retry-announce-on-eagain.patch
+picasso/0012-backlight-qcom-wled-balance-ovp-irq.patch
+picasso/0013-drm-msm-drop-per-frame-pr-info.patch
+picasso/0014-media-venus-skip-iris1-power-collapse-on-idle-timeout.patch
+picasso/0015-power-supply-qcom-pm7250b-add-qg-battery.patch

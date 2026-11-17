@@ -1,0 +1,28 @@
+diff --git a/net/qrtr/ns.c b/net/qrtr/ns.c
+index bcb090ee7..8b6e967c2 100644
+--- a/net/qrtr/ns.c
++++ b/net/qrtr/ns.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2020, Linaro Ltd.
+  */
+ 
++#include <linux/delay.h>
+ #include <linux/module.h>
+ #include <linux/qrtr.h>
+ #include <linux/workqueue.h>
+@@ -226,7 +227,14 @@ static int announce_servers(struct sockaddr_qrtr *sq)
+ 
+ 	/* Announce the list of servers registered in this node */
+ 	xa_for_each(&node->servers, index, srv) {
+-		ret = service_announce_new(sq, srv);
++		int retries = 100;
++
++		do {
++			ret = service_announce_new(sq, srv);
++			if (ret != -EAGAIN)
++				break;
++			msleep(10);
++		} while (--retries > 0);
+ 		if (ret < 0) {
+ 			if (ret == -ENODEV)
+ 				continue;
