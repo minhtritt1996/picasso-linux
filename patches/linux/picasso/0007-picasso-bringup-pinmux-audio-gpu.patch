@@ -9,10 +9,10 @@ index 798643be3..8ccb9f5ab 100644
 +obj-y += picasso-pinmux.o
 diff --git a/drivers/soc/qcom/picasso-pinmux.c b/drivers/soc/qcom/picasso-pinmux.c
 new file mode 100644
-index 000000000..bf3502a53
+index 000000000..2211f293f
 --- /dev/null
 +++ b/drivers/soc/qcom/picasso-pinmux.c
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,181 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Early pinmux for the Xiaomi Redmi K30 5G (picasso, SM7250).
@@ -157,6 +157,31 @@ index 000000000..bf3502a53
 +		mdelay(1);
 +		picasso_mux(57, TLMM_TILE_WEST, 0, 2, 0, true, 1);
 +	}
++
++	/* Camera: CCI buses, MCLKs, reset/pwdn lines and rail enables.  All of
++	 * this is EAST-tile (except gpio33/127) and therefore invisible to
++	 * pinctrl-msm; downstream values from
++	 * picasso-sm7250-camera-sensor-mtp.dtsi. */
++	picasso_mux(17, TLMM_TILE_EAST, 1, 0, 3, false, 0);	/* CCI0 master0 SDA/SCL */
++	picasso_mux(18, TLMM_TILE_EAST, 1, 0, 3, false, 0);
++	picasso_mux(19, TLMM_TILE_EAST, 1, 0, 3, false, 0);	/* CCI0 master1 */
++	picasso_mux(20, TLMM_TILE_EAST, 1, 0, 3, false, 0);
++	picasso_mux(27, TLMM_TILE_EAST, 1, 0, 3, false, 0);	/* CCI1 master0 */
++	picasso_mux(28, TLMM_TILE_EAST, 1, 0, 3, false, 0);
++	picasso_mux(13, TLMM_TILE_EAST, 1, 1, 0, false, 0);	/* MCLK0 front */
++	picasso_mux(14, TLMM_TILE_EAST, 1, 1, 0, false, 0);	/* MCLK1 main */
++	picasso_mux(15, TLMM_TILE_EAST, 1, 2, 0, false, 0);	/* MCLK2 */
++	picasso_mux(16, TLMM_TILE_EAST, 1, 1, 0, false, 0);	/* MCLK3 rear depth */
++	picasso_mux(25, TLMM_TILE_EAST, 3, 1, 0, false, 0);	/* MCLK4 macro */
++	picasso_mux(29, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* main reset */
++	picasso_mux(30, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* ultrawide */
++	picasso_mux(32, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* front */
++	picasso_mux(21, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* rear depth */
++	picasso_mux(23, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* macro */
++	picasso_mux(33, TLMM_TILE_WEST, 0, 0, 0, true, 1);	/* front depth */
++	picasso_mux(68, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* shared VIO 1.8 V */
++	picasso_mux(127, TLMM_TILE_WEST, 0, 0, 0, true, 1);	/* main VANA 2.8 V */
++	picasso_mux(45, TLMM_TILE_EAST, 0, 0, 0, true, 1);	/* main VDIG 1.2 V */
 +
 +	/* let the touch controller come out of reset and boot its firmware */
 +	if (do_write) {

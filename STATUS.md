@@ -2479,3 +2479,36 @@ Conclusion: the mainline OPP table (`sm7250.dtsi:1360-1395`, max 625 MHz with
 be an overclock past the fused limit. No kernel change made. Re-verified after the 45-minute
 watchdog returned the phone to the loader and it was RAM-booted again (`<lan-ip>`, uptime 0):
 same OPP set, `cur_freq` 275 MHz idle, GPU bound, no faults.
+
+### 21. NPU (Hexagon/CDSP) attempt and camera CCI bus proven (2026-11-17)
+
+#### Hexagon 696 compute DSP — node live, boot blocked at PAS authentication
+- `&cdsp` enabled in the board DTS (`firmware-name = "qcom/sm7250/xiaomi/picasso/image/cdsp.mdt"`)
+  and `tools/init.c` now rebinds `8300000.remoteproc` after the modem-firmware mount and writes
+  `start` to every `adsp`/`cdsp` remoteproc (the same path the ADSP uses).
+- Verified on hardware: `remoteproc1` appears with `name=cdsp`, the correct firmware path, and
+  `state=offline`. A manual `echo start > state` produces:
+  `remoteproc remoteproc1: Booting fw image .../cdsp.mdt, size 7660` then
+  `qcom_q6v5_pas 8300000.remoteproc: failed to authenticate image and release reset` /
+  `can't start rproc cdsp: -22`.
+- Ruled out: the memory region (`cdsp@87400000 + 0x1e00000`, `no-map`) is byte-identical to the
+  vendor `pil_cdsp_region`; the driver's `sm7250_cdsp_resource` already carries `pas_id = 18`,
+  `crash_reason_smem = 601`, `proxy_pd_names = {"cx"}` which match the vendor `qcom,turing@8300000`
+  node; the firmware files (`cdsp.b00..b19`) are present in the modem image dir and load into RAM
+  (the failure is the SCM auth step, after loading). Next: compare the PAS id / `ssctl` instance
+  this TZ expects (vendor `smem-id 601`, `ssctl-instance-id 0x17`, `minidump-id 7`) and whether the
+  image needs the vendor's `qcom,pil-tz-generic` proxy votes (CX TURBO) before auth.
+
+#### Camera: pads muxed, CCI buses answer with real devices
+- `picasso-pinmux` now muxes the whole camera pin group from the downstream
+  `picasso-sm7250-camera-sensor-mtp.dtsi`: CCI SDA/SCL (gpio17-20, 27, 28), the five MCLKs
+  (gpio13-16, 25), the six reset/pwdn lines (gpio29/30/32/21/23/33) and the rail enables
+  (gpio68 VIO, 127 VANA, 45 VDIG).
+- Verified: `i2cdetect` on the three CCI adapters finds **real devices** -
+  `i2c-3` (`cci@ac4a000/i2c-bus@0`) **0x50**, `i2c-4` (`.../i2c-bus@1`) **0x51**,
+  `i2c-5` (`cci@ac4b000/i2c-bus@0`) **0x51 and 0x52**. Those are the camera-module EEPROMs; they
+  prove bus pads, pull-ups and the VIO rail are correct.
+- The sensors themselves (IMX686/OV8856/S5K3T2/S5K5E9/GC02M1) do **not** answer yet: their MCLKs
+  come from `camcc` and nothing enables them, and Sony parts gate their I2C on MCLK. Stage 3 needs a
+  camcc clock consumer (or an explicit `assigned-clock-rates` + `clk_prepare_enable` in a probe) before
+  the sensor-ID read from `docs/phase2/camera.md` §3 can run.

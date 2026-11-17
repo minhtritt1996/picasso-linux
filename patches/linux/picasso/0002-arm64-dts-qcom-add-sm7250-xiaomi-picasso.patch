@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..41bc4669d
+index 000000000..b1984797e
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,1280 @@
+@@ -0,0 +1,1288 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -733,6 +733,14 @@ index 000000000..41bc4669d
 +/* Audio DSP: PAS subsystem whose firmware sits in the modem image dir */
 +&adsp {
 +	firmware-name = "qcom/sm7250/xiaomi/picasso/image/adsp.mdt";
++	status = "okay";
++};
++
++/* Hexagon 696 compute DSP (NPU / Hexagon Tensor Accelerator).  Same PAS image
++ * dir as the ADSP; init rebinds 8300000.remoteproc after the firmware mount
++ * because the early probe runs before that partition is mounted. */
++&cdsp {
++	firmware-name = "qcom/sm7250/xiaomi/picasso/image/cdsp.mdt";
 +	status = "okay";
 +};
 +

@@ -825,6 +825,7 @@ static void mount_firmware(void)
 	/* Now rebind BT, modem remoteproc, and wifi after firmware & QRTR services are up */
 	rebind("qcom_geni_serial", "894000.serial");
 	rebind("qcom_q6v5_pas", "4080000.remoteproc");
+	rebind("qcom_q6v5_pas", "8300000.remoteproc");
 	rebind("ath10k_snoc", "18800000.wifi");
 	rebind("qcom-venus", "aa00000.video-codec");
 
@@ -842,7 +843,7 @@ static void mount_firmware(void)
 				snprintf(nm, sizeof(nm), "/sys/class/remoteproc/%s/name", e->d_name);
 				if (read_file(nm, st, sizeof(st)) <= 0)
 					continue;
-				if (!strstr(st, "adsp"))
+				if (!strstr(st, "adsp") && !strstr(st, "cdsp"))
 					continue;
 				snprintf(nm, sizeof(nm), "/sys/class/remoteproc/%s/state", e->d_name);
 				{
@@ -850,9 +851,12 @@ static void mount_firmware(void)
 
 					if (fd >= 0) {
 						if (write(fd, "start", 5) < 0)
-							klog("adsp: start failed: %s\n", strerror(errno));
+							klog("%s: start failed: %s\n",
+							     strstr(st, "cdsp") ? "cdsp" : "adsp",
+							     strerror(errno));
 						else
-							klog("adsp: start written\n");
+							klog("%s: start written\n",
+							     strstr(st, "cdsp") ? "cdsp" : "adsp");
 						close(fd);
 					}
 				}
@@ -900,6 +904,9 @@ static void mount_firmware(void)
 				if (rproc_state_path("modem", pth, sizeof(pth)) == 0 &&
 				    read_file(pth, buf, sizeof(buf)) > 0)
 					klog("state: modem = %s", buf);
+				if (rproc_state_path("cdsp", pth, sizeof(pth)) == 0 &&
+				    read_file(pth, buf, sizeof(buf)) > 0)
+					klog("state: cdsp = %s", buf);
 				list_dir("/sys/class/net");
 				list_dir("/dev/dri");
 				{
