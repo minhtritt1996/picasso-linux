@@ -413,3 +413,22 @@ must show `1 1` while recording.
 * If `arecord -d 3` still returns `EIO` after §7 step 2, then either H2 (AFE cdc-dma config) or H4
   (`sdw:3` stuck in `Alert`) holds; §6.2/§6.3 name the patches that make each distinguishable
   without guessing, and §4.5 gives the VA-DMIC path that sidesteps the SoundWire slave entirely.
+
+## 9. Hardware result (2026-11-17, after this report was written)
+
+The §6.1 hypothesis was tested on the phone (`<lan-ip>`, kernel #203 with the capture DTS):
+
+* `amixer -c0 cget numid=21` / `numid=22` -> **`values=on`** (`ADC1 Switch`, `ADC2 Switch`).
+* Macro side re-applied (`MultiMedia2 Mixer TX_CODEC_DMA_TX_3=1`, `TX DEC0 MUX=SWR_MIC`,
+  `TX SMIC MUX0=ADC0`, `TX_AIF1_CAP Mixer DEC0=1`, `TX_DEC0 Volume=84`), then
+  `arecord -D hw:0,1 -f S16_LE -r 48000 -c 2 -d 4` -> **still `read error: Input/output error`**
+  (44-byte WAV, i.e. the same `wait_for_avail()` timeout).
+* The DMIC route was tried as well (`DMIC2 Switch` on, `TX DEC2 MUX=MSM_DMIC`,
+  `TX DMIC MUX2=DMIC2`, `TX_AIF1_CAP Mixer DEC2=1`, `TX_DEC2 Volume=84`): **same EIO**.
+* Note on the command syntax in §6.1/§7: `amixer cset "ADC1 Switch" 1` is rejected
+  (`Wrong control identifier`); use `cset numid=21 1` or `cset name='ADC1 Switch' 1`.
+
+Conclusion: enabling the codec's TX SoundWire ports is necessary but **not sufficient**. The stall is
+downstream of the codec (TX macro DIN / ADM matrix map / `ASM_SESSION_CMD_RUN_V2` status). The §6.2
+guard patch is still worth landing so the next failure is not a silent timeout, and §6.3 (check the
+run status) is the next measurement.
