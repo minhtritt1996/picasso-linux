@@ -2569,3 +2569,28 @@ Results on hardware (`<lan-ip>`):
   the right one (`MultiMedia2 Mixer TX_CODEC_DMA_TX_3` exists and is `on`; there is no
   `MultiMedia2 Mixer WCD Capture`).
 - **Guard (0016) still correct**: without the switches `arecord` fails at open with `EINVAL`.
+
+### 25. Camera MCLK: a plain clock consumer cannot gate it (negative result, reverted) (2026-11-17)
+
+Tried the obvious workaround for the missing MCLK: a small consumer driver
+(`picasso,camera-mclks`) that sets the five `camcc` MCLK branches to 24 MHz and enables them, so the
+sensors would answer on CCI before any sensor driver exists. **It does not work; the experiment was
+reverted.**
+
+- `devm_clk_get_optional_enabled()` fails on the first clock:
+  `clk_branch_toggle+0x168 -> picasso_camera_mclk_probe -> error -EBUSY: cannot enable mclk0`,
+  followed by `probe with driver picasso-camera-mclks failed with error -16`. `clk_branch_toggle`
+  prints a kernel trace (`---[ end trace ... ]---`) when the branch halt check never reports "off",
+  so the branch/its tree is not runnable in that state (the camera power/core-clock context that the
+  vendor kgsl-era driver establishes before touching MCLK is missing).
+- The same failure happened at boot (silently then, `state=unbound`, all five MCLKs stayed
+  `enable=0`, `rate=19200000`).
+- Reverted cleanly: driver file, its `obj-y` line, the DT node and the `CLK_IGNORE_UNUSED` markers on
+  the two MCLK branches are all gone; patch 0007 no longer mentions the file. Rebuilt, re-exported and
+  re-booted: **no `clk_branch_toggle` trace**, no `camera-mclks` device, card and remoteprocs
+  unchanged (`adsp running`, `modem running`, `cdsp offline`), and `i2cdetect` still shows the camera
+  EEPROMs (`0x50`, `0x51`, `0x51/0x52`) on the three CCI adapters.
+
+Conclusion for stage 3: the sensor-ID read needs the camera clock/power context brought up properly
+(camcc core clock + TITAN_TOP GDSC sequencing as the downstream/VFE stack does), not a bare consumer
+of the MCLK branches.
