@@ -291,6 +291,17 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bluetooth delta to export)"
 	fi
+	local pw="picasso/0016-ASoC-wcd938x-guard-sdw-capture-ports.patch"
+	echo "==> Exporting $pw"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- sound/soc/codecs/wcd938x-sdw.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pw"
+		grep -qxF "$pw" "$PATCHES/series" || echo "$pw" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no wcd938x-sdw delta to export)"
+	fi
 	local pt="picasso/0011-input-picasso-nvt-sram-firmware.patch"
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-spi.c
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-vendor.c

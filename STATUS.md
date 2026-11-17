@@ -2512,3 +2512,27 @@ same OPP set, `cur_freq` 275 MHz idle, GPU bound, no faults.
   come from `camcc` and nothing enables them, and Sony parts gate their I2C on MCLK. Stage 3 needs a
   camcc clock consumer (or an explicit `assigned-clock-rates` + `clk_prepare_enable` in a probe) before
   the sensor-ID read from `docs/phase2/camera.md` §3 can run.
+
+### 22. Capture: silent stall turned into a hard error (0016) (2026-11-17)
+
+Followed the follow-up the capture root-cause pass recommended: instead of the ALSA core's 176 ms
+timeout (`wait_for_avail()` -> `-EIO`, which reads like a hardware fault), `wcd938x_sdw_hw_params()`
+now refuses a stream with no SoundWire data port and says why
+(`patches/linux/picasso/0016-ASoC-wcd938x-guard-sdw-capture-ports.patch`, exported and listed).
+
+Verified on hardware (`<lan-ip>`, kernel with 0016):
+
+- Card unchanged: `00-00 MultiMedia1 playback`, `00-01 MultiMedia2 capture`, playback intact.
+- **No codec switches set** (fresh boot state): `arecord -D hw:0,1 ...` now fails immediately with
+  `arecord: main:850: audio open error: Invalid argument` instead of recording for 176 ms and
+  returning `Input/output error`.
+- **With the codec switches set** (`ADC1/ADC2 Switch` + `MultiMedia2 Mixer TX_CODEC_DMA_TX_3`,
+  `TX DEC0 MUX=SWR_MIC`, `TX SMIC MUX0=ADC0`, `TX_AIF1_CAP Mixer DEC0`) the guard passes, `open`
+  succeeds, and the read still times out (`-EIO`) - i.e. the guard does not mask the real DSP stall
+  described in `docs/phase2/microphone-capture-eio.md` §9.
+- Open item: the `dev_err()` text that ships with the guard did not show up in `dmesg` in this run
+  (`soc_open: dai_startup wcd938x-sdw-tx -> 0` is the last related line), even though the -EINVAL
+  behaviour proves the new branch executed. Worth one more look when the capture data path is fixed.
+
+Gates: `./tools/policy-scan.sh` OK; `./build.sh check` applies the 31-patch series to a clean tree
+and builds the DTB (see the run recorded below).

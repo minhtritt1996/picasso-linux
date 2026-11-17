@@ -31,3 +31,4 @@ picasso/0012-backlight-qcom-wled-balance-ovp-irq.patch
 picasso/0013-drm-msm-drop-per-frame-pr-info.patch
 picasso/0014-media-venus-skip-iris1-power-collapse-on-idle-timeout.patch
 picasso/0015-power-supply-qcom-pm7250b-add-qg-battery.patch
+picasso/0016-ASoC-wcd938x-guard-sdw-capture-ports.patch

@@ -1,0 +1,17 @@
+diff --git a/sound/soc/codecs/wcd938x-sdw.c b/sound/soc/codecs/wcd938x-sdw.c
+index e5ad36841..906556150 100644
+--- a/sound/soc/codecs/wcd938x-sdw.c
++++ b/sound/soc/codecs/wcd938x-sdw.c
+@@ -114,6 +114,12 @@ int wcd938x_sdw_hw_params(struct wcd938x_sdw_priv *wcd,
+ 
+ 	wcd->sconfig.type = SDW_STREAM_PCM;
+ 
++	if (!wcd->active_ports) {
++		dev_err(&wcd->sdev->dev,
++			"no SoundWire data port enabled: set the codec's ADC*/DMIC*/MBHC Switch controls before opening the capture PCM\n");
++		return -EINVAL;
++	}
++
+ 	return sdw_stream_add_slave(wcd->sdev, &wcd->sconfig,
+ 				    &port_config[0], wcd->active_ports,
+ 				    wcd->sruntime);
