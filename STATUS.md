@@ -2550,3 +2550,22 @@ and builds the DTB (see the run recorded below).
 - So: QMI/LOC plumbing works; the open question is trace generation (first-fix-only firmware vs an
   assist step vs no sky view indoors). Next: one-process libqmi client that injects time, sets NMEA
   types, starts and follows, then the same outdoors. Recorded in `docs/phase2/gnss.md` §8.
+
+### 24. Diagnostics for the two silent failures (0017) (2026-11-17)
+
+Added `patches/linux/picasso/0017-async-status-diagnostics.patch`: the ASM run response now logs a
+non-zero status, and the PAS auth failure logs its numeric return code. Both are diagnostic only.
+
+Results on hardware (`<lan-ip>`):
+
+- **cdsp**: `qcom_q6v5_pas 8300000.remoteproc: failed to authenticate image and release reset: -22`.
+  The SCM call returns `-EINVAL`, not `-EACCES`, i.e. the firmware image/hash metadata presented to
+  the secure monitor is rejected (or the PAS id does not accept this payload) - the memory map and
+  driver data were already ruled out in §21.
+- **Capture**: with the codec switches on, the DSP **accepts** `ASM_SESSION_CMD_RUN_V2`
+  (no `ASM run failed` line), open succeeds, and the read still times out with `-EIO`. So the stream
+  is running but no `READ_DONE` ever arrives: the missing data is upstream of ASM (codec TX SoundWire
+  port -> TX macro DIN -> AFE port 0xB037), not a DSP command failure. The FE/BE routing control is
+  the right one (`MultiMedia2 Mixer TX_CODEC_DMA_TX_3` exists and is `on`; there is no
+  `MultiMedia2 Mixer WCD Capture`).
+- **Guard (0016) still correct**: without the switches `arecord` fails at open with `EINVAL`.

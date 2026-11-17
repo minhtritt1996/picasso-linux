@@ -302,6 +302,18 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no wcd938x-sdw delta to export)"
 	fi
+	local pd="picasso/0017-async-status-diagnostics.patch"
+	echo "==> Exporting $pd"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- sound/soc/qcom/qdsp6/q6asm.c \
+		drivers/remoteproc/qcom_q6v5_pas.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pd"
+		grep -qxF "$pd" "$PATCHES/series" || echo "$pd" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no async-status delta to export)"
+	fi
 	local pt="picasso/0011-input-picasso-nvt-sram-firmware.patch"
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-spi.c
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-vendor.c

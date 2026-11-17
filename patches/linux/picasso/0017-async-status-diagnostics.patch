@@ -1,0 +1,28 @@
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index db670618d..2d8adc0a0 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -337,7 +337,7 @@ static int qcom_pas_start(struct rproc *rproc)
+ 	ret = qcom_pas_prepare_and_auth_reset(pas->pas_ctx);
+ 	if (ret) {
+ 		dev_err(pas->dev,
+-			"failed to authenticate image and release reset\n");
++			"failed to authenticate image and release reset: %d\n", ret);
+ 		goto unmap_carveout;
+ 	}
+ 
+diff --git a/sound/soc/qcom/qdsp6/q6asm.c b/sound/soc/qcom/qdsp6/q6asm.c
+index de0bd8fd0..961241326 100644
+--- a/sound/soc/qcom/qdsp6/q6asm.c
++++ b/sound/soc/qcom/qdsp6/q6asm.c
+@@ -628,6 +628,10 @@ static int32_t q6asm_stream_callback(struct apr_device *adev,
+ 			break;
+ 		case ASM_SESSION_CMD_RUN_V2:
+ 			client_event = ASM_CLIENT_EVENT_CMD_RUN_DONE;
++			if (result->status != 0)
++				dev_err(ac->dev,
++					"ASM run failed: status 0x%x (capture source produced no data?)\n",
++					result->status);
+ 			break;
+ 		case ASM_STREAM_CMD_CLOSE:
+ 			client_event = ASM_CLIENT_EVENT_CMD_CLOSE_DONE;
