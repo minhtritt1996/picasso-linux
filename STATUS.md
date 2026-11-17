@@ -2594,3 +2594,44 @@ reverted.**
 Conclusion for stage 3: the sensor-ID read needs the camera clock/power context brought up properly
 (camcc core clock + TITAN_TOP GDSC sequencing as the downstream/VFE stack does), not a bare consumer
 of the MCLK branches.
+
+### 26. Capture: the TX SoundWire slave is in Alert, the master's read path misbehaves (2026-11-17)
+
+Followed §24 ("data missing upstream of ASM") one level down and found a concrete transport fault:
+
+- `/sys/bus/soundwire/devices/`:
+  - `sdw:2:0:0217:010d:00:4` (RX, swr1) -> **Attached**
+  - `sdw:3:0:0217:010d:00:3` (TX, swr2) -> **Alert**
+- Every capture `open` makes the TX master log
+  `qcom-soundwire 3230000.soundwire: qcom_swrm_irq_handler: SWR read enable valid mismatch`
+  (`SWRM_INTERRUPT_STATUS_READ_EN_RD_VALID_MISMATCH`, `drivers/soundwire/qcom.c:810`), i.e. a read
+  command is issued but the matching read-valid response never arrives; the slave then drops to
+  Alert. The RX master never prints this.
+- Port counts are not the problem: the master validates `qcom,din-ports = <5>` against
+  `SWRM_COMP_PARAMS` and would have logged "din-ports (5) mismatch with controller (N)"; it did not,
+  so the hardware agrees with the DT (5 DIN).
+- Consequence: the WCD9385's TX ports cannot be programmed/verified over SoundWire, which is exactly
+  why the codec switch route has no effect and the DSP streams silence (ASM run is accepted, §24).
+
+Next: compare the TX master instance against the RX one in the vendor `soundwire`/`swrm` code
+(`swrm-io-base` 0x3230000, master id 3, IRQ 166) - same register layout and same `qcom,soundwire-v1.5.1`
+compatible are used for both in our DTS, so the difference is likely in the command/read sequencing
+for a *DIN-only* master, or the TX slave needs a different `qcom,ports-*` table than the RX one
+(ours reuses the sm8250 tables verbatim).
+
+### 27. TX master wake IRQ: no effect on the Alert (reverted) (2026-11-17)
+
+Vendor wires a second interrupt on the TX SoundWire master (`swr_wake_irq`, PDC 109) next to the GIC
+SPI 166 one, and the mainline `qcom-soundwire` driver does support it (`of_irq_get(node, 1)` ->
+`qcom_swrm_wake_irq_handler`). Tried the same on `swr2`:
+
+- with `interrupts-extended = <&intc 166 LEVEL_HIGH>, <&pdc 109 LEVEL_HIGH>` the master registered both
+  IRQs (`/proc/interrupts`: two `soundwire` lines) and booted fine,
+- but the TX slave stayed **Alert** (`sdw:3:0:0217:010d:00:3`), `arecord` still returned `EIO`, and the
+  `SWR read enable valid mismatch` still fired once per open.
+- Reverted: the extra IRQ buys nothing here and is not proven to be part of the fault, so `swr2` is
+  back to the single SPI 166 interrupt that was verified working (as far as it goes) before.
+
+Remaining hypothesis for the Alert: a TX-specific master/slave protocol difference - the DIN-only
+master's command/read sequencing, the port tables (ours are the sm8250 ones reused verbatim), or the
+codec's TX slave programming - not the interrupt wiring.
