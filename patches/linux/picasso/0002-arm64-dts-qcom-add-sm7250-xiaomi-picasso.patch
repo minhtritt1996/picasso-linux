@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..2061fcf14
+index 000000000..ab83d610f
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,732 @@
+@@ -0,0 +1,759 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -454,6 +454,14 @@ index 000000000..2061fcf14
 +		compatible = "xiaomi,g7a-37-02-0a";
 +		reg = <0>;
 +
++		/*
++		 * The DDIC fitted to this unit is the "36 02 0c" variant (vendor
++		 * dmesg: g7a_36_02_0c; lockdown bytes 0x46 0x36), whose init
++		 * table and 1130x2468 timing differ from the 37 02 0a default.
++		 */
++		xiaomi,panel-g7a-36-02-0c;
++
++			backlight = <&pm8150l_wled>;
 +		vddio-supply = <&vreg_l1c_1p8>;
 +		reset-gpios = <&pm8150l_gpios 3 GPIO_ACTIVE_LOW>;
 +
@@ -631,9 +639,12 @@ index 000000000..2061fcf14
 +&q6afedai {
 +	dai@21 {
 +		reg = <SECONDARY_MI2S_RX>;
-+		/* vendor sec MI2S uses tx-lines = 2: the amp listens on
-+		 * data line 1 (gpio74), line 0 (gpio72) is its sense output */
-+		qcom,sd-lines = <2>;
++		/* qcom,sd-lines is the list of data-line *indices*, not a count
++		 * (q6afe-dai.c builds sd_line_mask as BIT(entries)); <2> selected
++		 * SD2 and left the amp's line (SD1, gpio74) undriven, which is
++		 * why the card played but nothing came out. Line 0 (gpio72) is
++		 * the amp's sense output, not an audio line. */
++		qcom,sd-lines = <0 1>;
 +	};
 +};
 +
@@ -737,9 +748,16 @@ index 000000000..2061fcf14
 +};
 +
 +&pon_pwrkey {
-+	/* NOT a wake source: pressing power while suspended ends in a PS_HOLD
-+	 * drop (the phone powers off instead of resuming), while volume-up and
-+	 * volume-down resume cleanly. Keep this key out of the wake path. */
++	/*
++	 * No wakeup-source here, and none is needed: pm8941-pwrkey marks the
++	 * pwrkey as a wake source by default (wakeup_source_default) and calls
++	 * enable_irq_wake() at suspend through the SPMI->PDC wake chain. The
++	 * binding rejects the property for this compatible. An earlier comment
++	 * here claimed the key was not a wake source because "the phone powers
++	 * off instead of resuming" - that was logind acting on the queued
++	 * KEY_POWER after a successful resume (HandlePowerKey=poweroff), not a
++	 * missing wake IRQ.
++	 */
 +	status = "okay";
 +};
 +
@@ -762,5 +780,14 @@ index 000000000..2061fcf14
 +		compatible = "xiaomi,picasso-nvt-ts-spi";
 +		reg = <0>;
 +		spi-max-frequency = <5000000>;
++		/* this unit's lockdown bytes (0x46,0x36,...) select the cfg_2 entry
++		 * of the vendor DT, i.e. fw03 rather than fw01 */
++		firmware-name = "novatek/novatek_nt36672c_g7a_fw03.bin";
++		/* vendor: novatek,reset-gpio = <&tlmm 4 0> */
++		reset-gpios = <&tlmm 4 GPIO_ACTIVE_LOW>;
++		/* vendor: novatek,irq-gpio = <&tlmm 5 0x2001>; the controller
++		 * idles INT low and pulses it high (vendor uses EDGE_RISING) */
++		interrupt-parent = <&tlmm>;
++		interrupts = <5 IRQ_TYPE_EDGE_RISING>;
 +	};
 +};

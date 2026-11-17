@@ -49,7 +49,10 @@ int main(int argc, char **argv)
 	const char *dev = argc > 1 ? argv[1] : "/dev/snd/pcmC0D0p";
 	struct snd_pcm_hw_params hp;
 	short buf[4096];
-	unsigned int rate = 48000, ch = 2, half, n = 0;
+	unsigned int rate = 48000, ch = 2, half, n = 0, c;
+
+	if (argc > 2)
+		ch = (unsigned int)atoi(argv[2]);
 	int fd, i, frames;
 
 	{
@@ -146,8 +149,10 @@ int main(int argc, char **argv)
 		for (i = 0; i < nf; i++, n++) {
 			short v = ((n / half) & 1) ? -12000 : 12000;
 
-			buf[2 * i] = v;
-			buf[2 * i + 1] = v;
+			/* every channel carries the tone: with more than one
+			 * data line the amp may be listening on either */
+			for (c = 0; c < ch; c++)
+				buf[ch * i + c] = v;
 		}
 		if (write(fd, buf, (size_t)nf * ch * sizeof(short)) < 0) {
 			perror("write");

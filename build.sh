@@ -237,8 +237,12 @@ export_patches() {
 	mv "$t" "$PATCHES/$p5"
 	echo "==> Exporting $p6"
 	t=$(mktemp)
+	# The header carries the panel->touch "prepare" contract, so it ships with
+	# the panel patch: the touch patch (0011) that uses it comes after this one.
+	git -C "$WS" add -N include/linux/picasso-g7a.h 2>/dev/null || true
 	git -C "$WS" diff HEAD -- drivers/gpu/drm/panel/panel-xiaomi-g7a-37-02-0a.c \
 		drivers/gpu/drm/panel/Kconfig drivers/gpu/drm/panel/Makefile \
+		include/linux/picasso-g7a.h \
 		Documentation/devicetree/bindings/display/panel/xiaomi,g7a-37-02-0a.yaml > "$t"
 	[ -s "$t" ] || { rm -f "$t"; die "empty patch: $p6 (already applied/committed?)"; }
 	mv "$t" "$PATCHES/$p6"
@@ -249,7 +253,8 @@ export_patches() {
 	git -C "$WS" diff HEAD -- \
 		drivers/soc/qcom/picasso-pinmux.c drivers/soc/qcom/Makefile \
 		sound/soc/qcom/qdsp6/q6asm-dai.c sound/core/pcm_native.c \
-		sound/soc/soc-pcm.c sound/soc/qcom/Kconfig > "$t"
+		sound/soc/soc-pcm.c sound/soc/qcom/Kconfig \
+		sound/soc/qcom/sm8250.c > "$t"
 	if [ -s "$t" ]; then
 		mv "$t" "$PATCHES/$p7"
 	else
@@ -288,7 +293,9 @@ export_patches() {
 	fi
 	local pt="picasso/0011-input-picasso-nvt-sram-firmware.patch"
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-spi.c
+	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-vendor.c
 	git -C "$WS" diff HEAD -- drivers/input/touchscreen/picasso-nvt-spi.c \
+		drivers/input/touchscreen/picasso-nvt-vendor.c \
 		drivers/input/touchscreen/Kconfig drivers/input/touchscreen/Makefile > "$PATCHES/$pt"
 	grep -qxF "$pt" "$PATCHES/series" || echo "$pt" >> "$PATCHES/series"
 

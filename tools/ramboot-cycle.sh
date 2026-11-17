@@ -45,9 +45,14 @@ case "$product" in
 	*)
 		if [ "$REBOOT" -eq 1 ]; then
 			say "no loader; asking the running kernel to reboot (console or ssh)"
-			python3 tools/console_cmd.py --reboot >/dev/null 2>&1 || true
+			# ssh first (fast when the link is up), console as the fallback
+			ssh -i "$HOME/.ssh/picasso_key" -o BatchMode=yes -o ConnectTimeout=4 \
+				-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+				root@192.168.7.2 'reboot -f' >/dev/null 2>&1 ||
+				python3 tools/console_cmd.py --reboot >/dev/null 2>&1 || true
 			for _ in $(seq 1 80); do
-				p=$(timeout 2 fastboot getvar product 2>&1 | head -n 1)
+				# a missing device makes fastboot fail, not the script
+				p=$(timeout 2 fastboot getvar product 2>&1 | head -n 1 || true)
 				case "$p" in *xnuloader*) say "loader up"; break ;; esac
 				sleep 3
 			done

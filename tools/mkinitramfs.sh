@@ -5,7 +5,7 @@
 #
 #   tools/mkinitramfs.sh [OUT]   default: build/out/initrd.cpio.gz
 set -euo pipefail
-ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
+ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 OUT=${1:-$ROOT/build/out/initrd.cpio.gz}
 CC=${CC:-aarch64-linux-gnu-gcc}
 TMP="$ROOT/build/initramfs"

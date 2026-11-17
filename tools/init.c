@@ -21,6 +21,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
@@ -836,6 +840,202 @@ static void mount_firmware(void)
 	}
 }
 
+/* ---------------------------------------------------------------- UFS root */
+
+/*
+ * Booting an installed system instead of this ramdisk. The image on the
+ * partition is self-describing: /usr/lib/phonewave-system/root marks a system
+ * that wants to be booted this way (docs/denial-mobile-architecture.md). Which
+ * partition is asked in this order: cmdline picasso.root=<PARTNAME>, then
+ * "denial", then "linux". With picasso.noswitch the ramdisk stays root and the
+ * console shell below never goes away - that is the rescue path.
+ */
+static void cmdline_value(const char *key, char *out, size_t outlen)
+{
+	char buf[1024];
+	const char *p, *e;
+
+	out[0] = 0;
+	if (read_file("/proc/cmdline", buf, sizeof(buf)) <= 0)
+		return;
+	p = strstr(buf, key);
+	if (!p)
+		return;
+	p += strlen(key);
+	e = p;
+	while (*e && *e != ' ' && *e != '\n')
+		e++;
+	if ((size_t)(e - p) >= outlen)
+		return;
+	memcpy(out, p, (size_t)(e - p));
+	out[e - p] = 0;
+}
+
+static int write_text(const char *path, const char *text)
+{
+	size_t len = strlen(text);
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	ssize_t n;
+
+	if (fd < 0)
+		return -1;
+	n = write(fd, text, len);
+	close(fd);
+	return n == (ssize_t)len ? 0 : -1;
+}
+
+/*
+ * Device policy that must not live in the image: the system is upgraded as
+ * shipped, so per-phone decisions go into /run drop-ins, which systemd reads and
+ * which disappear with the next boot.
+ *
+ *  - hexagonrpcd: Denial's unit starts it on /dev/fastrpc-adsp-secure, but this
+ *    port's fastrpc node is the non-secure one (qcom,non-secure-domain), so the
+ *    device is /dev/fastrpc-adsp. Serving the sensor PD is what keeps the ADSP
+ *    from tripping its user-PD watchdog every ~40 s.
+ *  - logind: the PMIC pwrkey already wakes the system (pm8941-pwrkey enables the
+ *    wake IRQ itself). With logind's default HandlePowerKey=poweroff the queued
+ *    KEY_POWER then powers the phone off right after the resume. A short press
+ *    should sleep, a long press still powers off.
+ */
+static void write_device_dropins(const char *newroot)
+{
+	static const char hexagon[] =
+		"[Service]\n"
+		"ExecStart=\n"
+		"ExecStart=/usr/bin/hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R /run/hexagonrpcd\n";
+	static const char logind[] =
+		"[Login]\n"
+		"HandlePowerKey=suspend\n"
+		"HandlePowerKeyLongPress=poweroff\n";
+	char p[192];
+
+	snprintf(p, sizeof(p), "%s/run/systemd/system/hexagonrpcd.service.d", newroot);
+	mkdir_parents(p);
+	snprintf(p, sizeof(p), "%s/run/systemd/system/hexagonrpcd.service.d/10-nonsecure.conf",
+		 newroot);
+	if (write_text(p, hexagon))
+		klog("root: hexagonrpcd drop-in failed: %s\n", strerror(errno));
+	else
+		klog("root: hexagonrpcd drop-in written\n");
+
+	snprintf(p, sizeof(p), "%s/run/systemd/logind.conf.d", newroot);
+	mkdir_parents(p);
+	snprintf(p, sizeof(p), "%s/run/systemd/logind.conf.d/10-picasso-powerkey.conf",
+		 newroot);
+	if (write_text(p, logind))
+		klog("root: logind drop-in failed: %s\n", strerror(errno));
+	else
+		klog("root: logind power-key policy written\n");
+}
+
+/* The stock firmware partitions are mounted in this ramdisk; the new root must
+ * see them at the same paths, as the same read-only mounts (never copied). */
+static void bind_firmware(const char *newroot)
+{
+	static const char *const dirs[] = {
+		"/lib/firmware/qcom/sm7250/xiaomi/picasso",
+		"/lib/firmware/qca",
+		"/vendor",
+	};
+	char dst[192];
+	int i;
+
+	for (i = 0; i < (int)ARRAY_SIZE(dirs); i++) {
+		snprintf(dst, sizeof(dst), "%s%s", newroot, dirs[i]);
+		mkdir_parents(dst);
+		if (mount(dirs[i], dst, NULL, MS_BIND, NULL))
+			klog("root: bind %s: %s\n", dirs[i], strerror(errno));
+		else
+			klog("root: bound %s\n", dirs[i]);
+	}
+}
+
+/* Returns only on failure: on success systemd in the new root owns the box. */
+static int switch_to_partition(const char *part)
+{
+	char dev[64], marker[192];
+	static char *const argv[] = { "systemd", NULL };
+	int i;
+
+	if (find_part(part, dev, sizeof(dev)) < 0) {
+		klog("root: no partition named %s\n", part);
+		return -1;
+	}
+	mkdir("/newroot", 0755);
+	if (mount(dev, "/newroot", "ext4", 0, NULL)) {
+		klog("root: %s (%s) mount failed: %s\n", part, dev, strerror(errno));
+		return -1;
+	}
+	snprintf(marker, sizeof(marker), "/newroot/usr/lib/phonewave-system/root");
+	if (access(marker, R_OK)) {
+		klog("root: %s has no phonewave marker, skipped\n", part);
+		umount("/newroot");
+		return -1;
+	}
+	klog("root: %s (%s) is the system, switching to it\n", part, dev);
+
+	/* systemd wants /run to be a tmpfs already; ours carries the drop-ins */
+	mkdir("/newroot/run", 0755);
+	if (mount("tmpfs", "/newroot/run", "tmpfs", 0, "mode=0755"))
+		klog("root: /run tmpfs failed: %s\n", strerror(errno));
+	write_device_dropins("/newroot");
+	bind_firmware("/newroot");
+
+	{
+		static const char *const moves[] = { "dev", "proc", "sys" };
+
+		for (i = 0; i < (int)ARRAY_SIZE(moves); i++) {
+			char src[32], dst[64];
+
+			snprintf(src, sizeof(src), "/%s", moves[i]);
+			snprintf(dst, sizeof(dst), "/newroot/%s", moves[i]);
+			mkdir(dst, 0755);
+			if (mount(src, dst, NULL, MS_MOVE, NULL))
+				klog("root: move /%s: %s\n", moves[i], strerror(errno));
+		}
+	}
+
+	if (chdir("/newroot"))
+		return -1;
+	if (mount(".", "/", NULL, MS_MOVE, NULL)) {
+		klog("root: move /: %s\n", strerror(errno));
+		return -1;
+	}
+	if (chroot(".")) {
+		klog("root: chroot: %s\n", strerror(errno));
+		return -1;
+	}
+	chdir("/");
+	klog("root: exec /usr/lib/systemd/systemd\n");
+	execv("/usr/lib/systemd/systemd", argv);
+	klog("root: exec failed: %s\n", strerror(errno));
+	return -1;
+}
+
+static void try_udev_root(void)
+{
+	char part[64];
+	int tried = 0;
+
+	/*
+	 * Opt-in while the boot of the image on UFS is still being brought up:
+	 * a plain boot stays in this ramdisk, where the console and the ECM link
+	 * are known to work. Add picasso.switchroot=1 to hand over to Denial.
+	 */
+	if (!cmdline_flag("picasso.switchroot"))
+		return;
+	cmdline_value("picasso.root=", part, sizeof(part));
+	if (part[0] && !switch_to_partition(part)) {
+		tried = 1;
+		return;
+	}
+	(void)tried;
+	switch_to_partition("denial");
+	switch_to_partition("linux");
+	klog("root: no bootable system on UFS, staying in the ramdisk\n");
+}
+
 static void mount_userdata(void)
 {
 	char dev[64];
@@ -885,6 +1085,71 @@ static void dump_pstore(void)
 	closedir(d);
 }
 
+/* --- USB CDC-ECM: the link the host reaches this phone on ---------------- */
+
+/* Only bring the interface up: the address is the system's business (the image
+ * on UFS runs systemd-networkd, usr/lib/systemd/network/10-phone-usb.network
+ * puts 10.77.71.2/30 on it). A raw ramdisk boot just exposes a bare link. */
+static void link_up(const char *ifname)
+{
+	struct ifreq ifr;
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+	if (fd < 0)
+		return;
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+	if (!ioctl(fd, SIOCGIFFLAGS, &ifr)) {
+		ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+		if (ioctl(fd, SIOCSIFFLAGS, &ifr))
+			klog("net: SIOCSIFFLAGS %s: %s\n", ifname, strerror(errno));
+		else
+			klog("net: %s up\n", ifname);
+	}
+	close(fd);
+}
+
+/*
+ * The ramdisk used to leave networking to the userspace it ran. The image on
+ * UFS expects the link to exist already (its own initramfs creates it before
+ * switch_root), so create both functions here: ACM for the console, ECM for
+ * ssh. The address follows the phone image's convention, 10.77.71.2/30 with
+ * the host on .1 - a link-local pair that cannot clash with a LAN.
+ */
+static void ecm_setup(void)
+{
+	const char *g = "/sys/kernel/config/usb_gadget/g1";
+	char p[192];
+	int i;
+
+	snprintf(p, sizeof(p), "%s/functions/ecm.usb0", g);
+	klog("net: mkdir %s\n", p);
+	if (mkdir(p, 0755) && errno != EEXIST)
+		klog("net: ecm function failed: %s\n", strerror(errno));
+	klog("net: ecm function created\n");
+	snprintf(p, sizeof(p), "%s/functions/ecm.usb0/dev_addr", g);
+	write_file(p, "02:00:00:00:00:02");
+	snprintf(p, sizeof(p), "%s/functions/ecm.usb0/host_addr", g);
+	write_file(p, "02:00:00:00:00:01");
+	klog("net: ecm addresses written, linking into c.1\n");
+	if (symlink("/sys/kernel/config/usb_gadget/g1/functions/ecm.usb0",
+		    "/sys/kernel/config/usb_gadget/g1/configs/c.1/ecm.usb0") &&
+	    errno != EEXIST)
+		klog("net: ecm link failed: %s\n", strerror(errno));
+	klog("net: ecm linked\n");
+
+	/* the interface exists as soon as the function does */
+	for (i = 0; i < 50; i++) {
+		if (access("/sys/class/net/usb0", F_OK) == 0)
+			break;
+		usleep(100000);
+	}
+	if (i == 50)
+		klog("net: usb0 never appeared\n");
+	else
+		klog("net: usb0 present\n");
+}
+
 /* --- USB CDC-ACM gadget: the only console on this board ------------------ */
 
 static void gadget_setup(void)
@@ -913,6 +1178,8 @@ static void gadget_setup(void)
 	mkdir("/sys/kernel/config/usb_gadget/g1/functions/acm.GS0", 0755);
 	symlink("/sys/kernel/config/usb_gadget/g1/functions/acm.GS0",
 		"/sys/kernel/config/usb_gadget/g1/configs/c.1/acm.GS0");
+	/* ACM is the console, ECM the link the system on UFS expects */
+	ecm_setup();
 
 	/* the controller (and its UDC) can appear late */
 	for (int i = 0; i < 60; i++) {
@@ -929,6 +1196,17 @@ static void gadget_setup(void)
 				printf("usb: gadget bound to %s\n", udc);
 				klog("picasso-init: gadget bound to %s\n", udc);
 				mlog("gadget %s\n", udc);
+				/* f_ecm reports carrier once the host configures
+				 * the data interface; the netdev itself has to be
+				 * administratively up first, and that only sticks
+				 * after the controller is bound */
+				for (int k = 0; k < 20; k++) {
+					if (access("/sys/class/net/usb0", F_OK) == 0)
+						link_up("usb0");
+					usleep(200000);
+					if (access("/sys/class/net/usb0/flags", F_OK) == 0)
+						break;
+				}
 				return;
 			}
 			closedir(d);
@@ -1290,6 +1568,58 @@ static void cmd(int fd, char *line)
 		} else {
 			dprintf(fd, "tone: fork failed\n");
 		}
+	} else if (!strcmp(line, "ecm")) {
+		/*
+		 * Bring the network function up on a bound gadget: unbind the
+		 * controller, add ecm next to acm, bind again. Logged step by
+		 * step (and on the panel) because the bind is the step that
+		 * killed USB when this ran at boot.
+		 */
+		const char *u = "/sys/kernel/config/usb_gadget/g1/UDC";
+		char udc[64];
+		int f, n;
+		pid_t pid = fork();
+
+		if (pid != 0) {
+			dprintf(fd, "ecm: started pid %d\n", (int)pid);
+			return;
+		}
+		/* remember which controller we are on before unbinding */
+		f = open(u, O_RDONLY);
+		n = f >= 0 ? read(f, udc, sizeof(udc) - 1) : -1;
+		if (f >= 0)
+			close(f);
+		if (n <= 0)
+			n = 0;
+		udc[n] = 0;
+		while (n > 0 && (udc[n - 1] == '\n' || udc[n - 1] == ' '))
+			udc[--n] = 0;
+		dprintf(fd, "ecm: 1 unbinding UDC %s\n", udc);
+		klog("net: step 1 unbind UDC %s\n", udc);
+		f = open(u, O_WRONLY);
+		if (f >= 0) {
+			(void)!write(f, "", 0);
+			close(f);
+		}
+		sleep(1);
+		dprintf(fd, "ecm: 2 creating function\n");
+		klog("net: step 2 ecm function\n");
+		ecm_setup();
+		dprintf(fd, "ecm: 3 rebinding UDC\n");
+		klog("net: step 3 rebind UDC\n");
+		f = open(u, O_WRONLY);
+		if (f >= 0) {
+			dprintf(fd, "ecm: binding to %s\n", udc);
+			klog("net: binding to %s\n", udc);
+			(void)!write(f, udc, strlen(udc));
+			close(f);
+		}
+		sleep(2);
+		dprintf(fd, "ecm: 4 done (usb0 %s)\n",
+			access("/sys/class/net/usb0", F_OK) == 0 ? "present" : "missing");
+		klog("net: step 4 done, usb0 %s\n",
+		     access("/sys/class/net/usb0", F_OK) == 0 ? "present" : "missing");
+		_exit(0);
 	} else if (!strcmp(line, "mem")) {
 		dprintf(fd, "MemTotal %ld kB\n", memtotal_kb());
 	} else if (!strncmp(line, "ls ", 3)) {
@@ -1466,6 +1796,10 @@ int main(void)
 			reboot(RB_AUTOBOOT);
 		}
 	}
+
+	/* An installed system on UFS (Denial) takes over from here; this returns
+	 * only when no candidate partition carries the marker. */
+	try_udev_root();
 
 	/* PID 1 must not exit; killing init panics the kernel. */
 	for (;;)

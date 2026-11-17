@@ -1630,3 +1630,258 @@ Remaining for a Luma boot: a boot image whose initramfs finds LumaRoot **inside*
 the `linux` partition (nested GPT: `losetup -b 4096 -o 504365056`, or scan the
 image), resolves that ostree deployment, and switches root - then our UEFI chain
 can RAM-boot it.
+
+## Touch: the controller runs on fw03, the report pipe is still idle
+
+Measured on the phone (RAM boot, `picasso-nvt-*` dmesg + sysfs):
+
+- The host SRAM download was already byte-exact (read back SRAM 0 ==
+  `file[0x100:]`, SRAM 0x27140 == `file[0x18100:]`), and needs the download to run
+  *after* the panel has been prepared (the touch shares the TDDI reset).
+- **The firmware variant was wrong.** The vendor picks it from the panel's
+  lockdown bytes (`0x46,0x36,...` -> `novatek,cfg_2` -> `fw03`); the driver
+  defaulted to `fw01`. With fw03 the controller reports
+  `fw info: ver 0x0a (~0xf5) x_num 16 y_num 36`, `type 0x01`, `PID 0x5933` --
+  identical to the vendor boot -- and its INT line starts pulsing.
+- `drivers/input/touchscreen/picasso-nvt-vendor.c` (ported from the vendor
+  `nt36xxx` core) downloads fw03, matches the ILM CRC exactly (`0x547123e5`),
+  reaches ReK (`0xA1`) and reads `0xFD`-filled reports: the controller runs but
+  does not publish contacts yet.
+- `0x22D51 = 0xA5` is a red herring (see docs/tddi-touch-dsi.md); the vendor's
+  handshake constant is `HANDSHAKING_HOST_READY 0xBB`, test-mode only.
+- The panel installed on this phone is `g7a_36_02_0c`, not the `g7a_37_02_0a`
+  table our panel driver carries; the vendor on-table's `FF 27 / FB 01 / 3F 01 /
+  43 08 / 40 25` group is sent *after* `0x29` and is the strongest candidate for
+  the TDDI gate. `docs/tddi-touch-dsi.md` records the whole vendor recon with
+  file:line citations and the remaining unknowns.
+
+Next: bind the 36_02_0c table (and stop re-sending `0x11`/`0x29` after it), then
+re-test `report`/`libinput debug-events` with a finger down. Trigger for the
+touch IRQ is `EDGE_RISING` (the line idles low; level-low storms).
+
+### Touch: paused 2026-11-16 (resume here tomorrow)
+
+Artifacts ready to RAM-boot (built, not yet run): panel `36_02_0c` table
+(`xiaomi,panel-g7a-36-02-0c` in the DTS), vendor touch driver
+(`picasso-nvt-vendor.c`, fw03, `IRQF_TRIGGER_RISING`, sysfs `state`), and the
+deployment's shutdown teardown + enabled 20-minute `picasso-autoreboot.timer`.
+First boot of that payload must check, in order: `dmesg | grep -iE "g7a|nvt-vendor"`
+(panel variant + touch bring-up), `cat /sys/bus/spi/devices/spi0.0/state`
+(state/irq/reports/contacts with a finger down), `libinput debug-events`,
+`systemctl list-timers | grep autoreboot`, then one `reboot` to prove the
+teardown reaches the loader.
+
+### Next session — finish the feature bring-up (paused 2026-11-16)
+
+Order, with the artifacts that already exist:
+
+1. **Touch / panel** — boot `build/out/payload-luma-okernel.bin` (build of
+   17:xx): panel `36_02_0c` table + vendor touch driver (fw03,
+   `IRQF_TRIGGER_RISING`, sysfs `state`) + deployment teardown + enabled
+   20-minute `picasso-autoreboot.timer`. Check, in order: `dmesg | grep -iE
+   "g7a|picasso-nvt-vendor"` (variant + bring-up), `cat
+   /sys/bus/spi/devices/spi0.0/state` with a finger down, `libinput
+   debug-events`, `systemctl list-timers | grep autoreboot`, then one `reboot`
+   to prove the teardown reaches the loader.
+2. **Denial Mobile** — write `~/denial-staging/userdata.raw` (ext4 6.14 GiB,
+   sha256-verified zip, marker `/usr/lib/phonewave-system/root` present) into
+   `sda36`, rename the partition to `denial`, and point the initramfs at
+   `PARTNAME=denial` (contract in `docs/denial-mobile-architecture.md`). First
+   boot headless: drop `flashed/authorized_keys`, then over SSH run
+   `first-user <user> "<name>" "" en <tz>` and `first-user --start`. Needs the
+   owner's approval for the UFS write (it erases the Luma image).
+3. **Repo hygiene** — the work of this session lives in the `build/linux`
+   working tree and in `docs/`/`STATUS.md`/`build.sh`. Before handing over:
+   `./build.sh export-patches` (already taught to carry
+   `picasso-nvt-vendor.c`), then `./build.sh check`.
+4. Then, and only then, the media-payload boot image of
+   `docs/multi-os-plan.md` §5 (multi-OS + no-host boot).
+
+### Suspend works on the Luma boot (verified 2026-11-17, uptime 14 h)
+
+What looked like "the phone dropped off the link" was **s2idle suspend**, and the
+power button resumed it:
+
+- `systemd-sleep`: `Performing sleep operation 'suspend'` 06:50:58 →
+  `System returned from sleep operation 'suspend'` 06:51:09 (11 s), then
+  `panel-xiaomi-g7a ae94000.dsi.0: prepare: power mode pm=0x9c err=0` at
+  06:51:11 — the panel driver re-initialises the panel on resume.
+- `dwc3-qcom-legacy a6f8800.usb: port-1 HS-PHY not in L2` at the two suspend
+  boundaries; the USB gadget re-enumerates (host sees
+  `enx020000000001`, MAC 02:00:00:00:00:01 as the gadget advertises).
+- logind dropped the greeter session (7) at resume; the lock screen the user saw
+  is GDM's greeter.
+- `mem_sleep` = `s2idle` only, so this is the freeze path, not deep suspend.
+
+Consequences recorded for the test loop:
+
+1. Idle suspend is now **blocked on the running system**:
+   `systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target`
+   (persistent symlinks to /dev/null; `systemctl suspend` refuses). To test
+   suspend again, `systemctl unmask sleep.target suspend.target` — the
+   `/sys/power/state` pm_test ladder is unaffected by the mask.
+2. The phone's gadget address on this boot is **`usb0` 192.168.7.2/24**, not the
+   10.77.71.2/30 Denial init uses; the host profile "Wired connection 2" is DHCP,
+   so after resume the host comes back with **no IPv4** and SSH/console-over-net
+   fails even though USB re-enumerated. **Fixed** on the workstation:
+   `nmcli con mod "Wired connection 2" ipv4.method manual ipv4.addresses 192.168.7.1/24 ipv4.gateway "" ipv4.never-default yes`
+   (persistent), ping 192.168.7.2 ≈ 2 ms.
+3. `sshd` on the phone listens on `[::]:22`. Root's `authorized_keys` now holds
+   the workstation key `~/.ssh/picasso_key.pub`, so:
+   `ssh -i ~/.ssh/picasso_key root@192.168.7.2` works (verified). Restoring the
+   host address and the key is what a resume needs if NetworkManager forgets the
+   profile again.
+
+## Touch: WORKS on hardware (verified 2026-11-17)
+
+`state=0xa3 irq=32898 reports=25625 contacts=28876` with a finger on the glass,
+libinput `cap:t ntouches 10`, weston binds `event2` to `DSI-1`, touches land in
+the compositor. Four separate defects had to go, all in the touch/panel pair:
+
+1. **Bring-up raced the panel.** Uploading while the panel was off (Luma keeps
+   it off until DPMS on) left the controller at ReK `0xA1` for good. The panel
+   driver now exports a blocking notifier (`include/linux/picasso-g7a.h`,
+   fired at the end of every successful `prepare`) plus
+   `picasso_g7a_panel_prepared()`; the touch driver registers for it and gates
+   its upload on it. Boot result: `normal run state 0xa3 after 80-90 ms`, first
+   attempt — no delay guessing (`upload_delay_ms` is only the initial timer).
+2. **Report decode was off by one byte.** The ten 6-byte records start at
+   byte 0 of the pipe (`point + 6 * i`); an empty slot reads `0xff`, i.e.
+   status 7 / slot 31, which the range checks drop. With `point + 1 + 6 * i`
+   every record decoded to status 7 and `reports` stayed 0 while the IRQ count
+   climbed.
+3. **Resume never reset the controller.** `nvt_suspend` parks it in deep sleep
+   (host command 0x11); `nvt_resume` used to re-upload without pulsing TP_RESX,
+   so every read came back `0xff` and the retries inherited the failure. Resume
+   now defers to the bring-up worker (which always pulses the engineering
+   reset) and the poll loop re-arms it whenever the reset state drops below
+   `0xA3` while the panel is prepared — that self-heals after any panel prepare.
+4. **`picasso_pinmux.mode=write` is mandatory in the cmdline.** Without it the
+   TLMM tiles are never written, SPI reads `0x00` and probe fails with
+   `not a supported Novatek controller (00 00 00 00 00 00)`. The payload must be
+   rebuilt with it.
+
+Also fixed: the `state` attribute is now actually attached
+(`devm_device_add_group`), so `…/spi0.0/state` exists; and the IRQ path works
+(`IRQF_TRIGGER_RISING`, ~120/s while touched), so polling is only a fallback.
+
+Patches: the header ships in `picasso/0006-drm-panel-xiaomi-g7a.patch` (the
+touch patch 0011 depends on it), the driver fixes in
+`picasso/0011-input-picasso-nvt-sram-firmware.patch`.
+
+### Touch: CI gate and the one follow-up
+
+`./build.sh check` on the exported series: `[OK] 25 patches applied`,
+`[OK] series applies to a clean tree and the DTB builds` (14 dtbs_check
+diagnostics, all from the pre-existing vendor series).
+
+A clean boot of the final payload: `normal run state 0xa3 after 80 ms`, then
+`state=0xa3 irq=1128 reports=875 contacts=892` after a few seconds of touch.
+
+Follow-up found while testing resume with this image: `echo mem >
+/sys/power/state` **does not wake on the power key** — neither press resumed it,
+both landed in the loader (i.e. the PMIC key is not registered as a wakeup
+source here; the older installed-Luma image did resume, so this is an
+initramfs/DT gap, not the touch driver). To test resume of the touch driver:
+enable wakeup on the pmic pwrkey (`wakeup-source` in the DT node, or
+`echo enabled > .../power/wakeup`) and on the dwc3 controller, then a short power
+press should resume. The bring-up worker is expected to rebuild the controller
+by itself (resume schedules it, and the poll loop re-arms it whenever the state
+drops below 0xA3 while the panel is prepared) — that path is written but not yet
+observed on hardware.
+
+## Audio: playback works on hardware (verified 2026-11-17)
+
+Speaker: MultiMedia1 → q6asm → ADM → AFE SECONDARY_MI2S_RX → TFA9874 → speaker.
+Measured with the tone tool (`tools/tone/tone.c`, now `tone <dev> <channels>`):
+stereo playback through card 0 is audible, no userspace amp helper needed — the
+in-kernel `tfa9874` driver's own init is enough.
+
+Two defects, both in the DSP/AFE configuration rather than the amp:
+
+1. **`qcom,sd-lines` is a list of line indices, not a count.** The DT had
+   `<2>`, which q6afe-dai turns into `BIT(2)` ⇒ SD2, so the AFE never drove the
+   amp's line. The vendor's sec-MI2S pinctrl answers which line that is: gpio74
+   (`sec_i2s_data1_active`, `output-high`, 8 mA) carries audio, gpio72
+   (`data0`) is `input-enable` — the amp's sense output. Now `<0 1>`, i.e.
+   QUAD01 over SD0+SD1.
+2. **The MI2S BE link must run four channels.** With the stereo frame the DSP
+   puts both channels on SD0 and the amp, listening on SD1's slots, hears
+   silence. `sm8250_be_hw_params_fixup()` now forces 4 channels for
+   `SECONDARY_MI2S_RX` (the vendor DT says `tx-lines = 2`, i.e. the same
+   QUAD01 frame); a stereo front end is mixed into it, so ordinary 2-channel
+   apps play.
+
+Verified states while sounding: AFE `i2s cfg rate 48000 bits 16 sd_mask 0x3
+ch 4`; amp `0x10=0x0016` (PLLS/OTDS/UVDS), `0x14=0x00c8` (MAN_STATE 9),
+`0x11=0xe2c0` (CLKS+AMPS), TDM `0x20/21/22/23 = 0890/c0f1/043c/0003`.
+
+Instrumentation used for this, now removed: prints for `q6routing`'s
+`q6adm_matrix_map` result, q6asm's trigger/run and q6afe's i2s cfg/port start
+(all returned success — the commands were fine, the channel/line mapping was
+not).
+
+Known limit: the ADSP still trips `USER-PD DOG` in `sensor_process` every ~40 s
+and remoteproc recovers it, which cuts any stream; playback resumes on the next
+open. That is the next audio task, not a playback-path bug.
+
+## Denial Mobile: image installed on UFS, boot hand-over in progress (2026-11-17)
+
+Written and verified (owner approved the UFS write):
+
+- `~/denial-staging/userdata.raw` (6,589,251,584 B, ext4, UUID
+  `0322c979-a112-4b5b-96e4-22659df0c773`, zip sha256 checked) was streamed into
+  `/dev/disk/by-partlabel/linux` (sda36, 20.0 GiB) from the running kernel with
+  `dd bs=8M conv=fsync` (5m14s). Verified afterwards: `blkid` shows the same
+  UUID, the filesystem mounts read-only and carries the marker
+  `/usr/lib/phonewave-system/root` plus `Arch Linux ARM` in os-release. The Luma
+  image that used to be there is gone.
+- On the boot where the hand-over ran, the kernel mounted sda36 r/w, grew it
+  (`EXT4-fs (sda36): resizing filesystem from 1608704 to 5253888 blocks`) and
+  `systemd` from the image became PID 1 - the switch itself works.
+
+`tools/init.c` gained the hand-over and is now the ramdisk's real init path:
+
+- `picasso.switchroot=1` is **opt-in**: candidates are `picasso.root=<PARTNAME>`,
+  then `denial`, then `linux`; a candidate is accepted only when it carries the
+  phonewave marker. On acceptance: tmpfs on /run, the device drop-ins below,
+  bind-mounts of the stock firmware partitions, MS_MOVE of /dev /proc /sys,
+  `chroot`+`execv("/usr/lib/systemd/systemd")`.
+- Device policy that must not live in the image goes to **/run drop-ins**:
+  `hexagonrpcd.service.d/10-nonsecure.conf` (`-f /dev/fastrpc-adsp`, this port's
+  node is the non-secure one) and `logind.conf.d/10-picasso-powerkey.conf`
+  (`HandlePowerKey=suspend`, long press still powers off - the pwrkey already
+  wakes the system, logind's default was what powered the phone off after a
+  resume).
+- The gadget now carries **ECM next to ACM** (`usb0`, host `02:00:00:00:00:01`,
+  phone `02:00:00:00:00:02`), because the image's
+  `usr/lib/systemd/network/10-phone-usb.network` assigns 10.77.71.2/30 itself and
+  sshd listens there. The link has to be brought up **after** the UDC bind
+  (before it, IFF_UP does not stick); with that, carrier is 1 and the host sees
+  the interface immediately.
+- `CONFIG_QCOM_FASTRPC=y` (configs/linux/picasso.config): without the driver the
+  ADSP's sensor user-PD never finishes its init and its watchdog resets the whole
+  ADSP every ~40 s. Denial ships `hexagonrpcd` + `usr/lib/hexagonrpcd/stock-sensors`,
+  which lays the ADSP's sensor configuration out from `super` (vendor/odm) and
+  `persist` - exactly the "read the stock partitions, keep the rootfs clean"
+  model, no firmware baked into the image.
+
+Open problem, measured: with **ECM present**, the hand-over leaves the phone
+unreachable (no ACM, no ECM, panel black) - both when ECM is created in the
+ramdisk before `switch_root` and on the retries. With **ACM only** the same
+hand-over keeps the console alive and the image boots. Next step is therefore to
+create ECM from the image's own userspace (a `/run/systemd/system`
+unit that unbinds the UDC, adds `ecm.usb0`, rebinds and brings `usb0` up) and
+leave the ramdisk gadget ACM-only when switching; the rebind path must be tested
+with the console present.
+
+Also fixed in this pass, all verified by rebuilding:
+
+- `tools/mkinitramfs.sh` computed ROOT two levels up (the script lives in
+  `tools/`), so the ramdisk was never rebuilt from source; it does now.
+- `tools/ramboot-cycle.sh` no longer dies when `fastboot` finds no device
+  (`set -e` on a command substitution); it reboots over ssh first, console second.
+- `picasso-pinmux` now defaults to `write`: with `read` the UART5/SPI/i2c8/MI2S
+  pads keep the bootloader's mux and touch reads 0x00 - the mode param was a trap.
+- `tools/tone/tone.c` takes a channel count (`tone <dev> <channels>`); four
+  channels on the two SD lines is what proved the amp's frame.
