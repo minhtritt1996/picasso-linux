@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..1880722be
+index 000000000..b57533523
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,1595 @@
+@@ -0,0 +1,1635 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -53,6 +53,7 @@ index 000000000..1880722be
 +#include <dt-bindings/input/linux-event-codes.h>
 +#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 +#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++#include <dt-bindings/usb/pd.h>
 +
 +/* PM7250B is configured to use SID2/3 */
 +#define PM7250B_SID 2
@@ -416,6 +417,10 @@ index 000000000..1880722be
 +	maximum-speed = "high-speed";
 +};
 +
++&usb_1_dwc3_hs_out {
++	remote-endpoint = <&pm7250b_hs_in>;
++};
++
 +&usb_1_hsphy {
 +	vdda-pll-supply = <&vreg_l5a_0p88>;
 +	vdda18-supply = <&vreg_l12a_1p8>;
@@ -755,6 +760,41 @@ index 000000000..1880722be
 + * ONLINE/PRESENT/STATUS/CHARGE_TYPE and a charge_behaviour knob. */
 +&pm7250b_charger {
 +	status = "okay";
++};
++
++&pm7250b_vbus {
++	regulator-min-microamp = <500000>;
++	regulator-max-microamp = <1500000>;
++	status = "okay";
++};
++
++&pm7250b_typec {
++	vdd-pdphy-supply = <&vreg_l2a_3p1>;
++	status = "okay";
++
++	connector {
++		compatible = "usb-c-connector";
++		power-role = "sink";
++		data-role = "device";
++		op-sink-microwatt = <10000000>;
++		sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)
++			     PDO_FIXED(9000, 2000, PDO_FIXED_USB_COMM)
++			     PDO_VAR(5000, 9000, 3000)>;
++		vbus-supply = <&pm7250b_vbus>;
++
++		ports {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			port@0 {
++				reg = <0>;
++
++				pm7250b_hs_in: endpoint {
++					remote-endpoint = <&usb_1_dwc3_hs_out>;
++				};
++			};
++		};
++	};
 +};
 +
 +/* Haptics: PM7250B hosts the QPNP vibrator LDO at SPMI peripheral 0x5300

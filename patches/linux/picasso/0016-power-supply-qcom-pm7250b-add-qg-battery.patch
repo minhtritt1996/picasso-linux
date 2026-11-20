@@ -1,22 +1,45 @@
 diff --git a/drivers/power/supply/qcom_pm7250b_charger.c b/drivers/power/supply/qcom_pm7250b_charger.c
-index 480aa56f9..f5de6c6d0 100644
+index 480aa56f9..753ef5370 100644
 --- a/drivers/power/supply/qcom_pm7250b_charger.c
 +++ b/drivers/power/supply/qcom_pm7250b_charger.c
-@@ -54,6 +54,13 @@
+@@ -44,6 +44,7 @@
+ #define CHGR_CFG2			0x51
+ #define  CHG_EN_SRC_BIT			BIT(7)
+ #define  CHG_EN_POLARITY_BIT		BIT(6)
++#define CHGR_FAST_CHARGE_CURRENT_CFG	0x61
+ 
+ /* DCDC_BASE = CHGR_BASE + 0x100 */
+ #define POWER_PATH_STATUS		0x10b
+@@ -51,8 +52,28 @@
+ #define  VALID_INPUT_POWER_SRC_BIT	BIT(0)
+ 
+ /* USBIN_BASE = CHGR_BASE + 0x300 */
++#define APSD_RESULT_STATUS		0x308
++#define  APSD_QC_3P0_BIT		BIT(6)
++#define  APSD_QC_2P0_BIT		BIT(5)
++#define  APSD_DCP_CHARGER_BIT		BIT(3)
++#define  APSD_CDP_CHARGER_BIT		BIT(2)
  #define USBIN_INT_RT_STS		0x310
  #define  USBIN_PLUGIN_RT_STS_BIT	BIT(4)
- 
++#define USBIN_OPTIONS_1_CFG		0x362
++#define  HVDCP_AUTONOMOUS_MODE_EN_BIT	BIT(5)
++#define  HVDCP_EN_BIT			BIT(2)
++#define USBIN_CURRENT_LIMIT_CFG		0x370
++
++/* 50 mA per LSB in both CHGR_FAST_CHARGE_CURRENT_CFG and USBIN_CURRENT_LIMIT_CFG */
++#define PM7250B_FAST_ICL_3000MA		0x3c
++#define PM7250B_FAST_FCC_3500MA		0x46
++
 +/* QG (Qgauge) peripheral on the same SPMI slave (0x4800) */
 +#define QG_S7_PON_OCV_V_DATA0_REG	0x4870
 +#define QG_S2_NORMAL_AVG_V_DATA0_REG	0x4880
 +#define QG_S2_NORMAL_AVG_I_DATA0_REG	0x4882
 +#define QG_LAST_ADC_V_DATA0_REG		0x48c0
 +#define QG_LAST_ADC_I_DATA0_REG		0x48c2
-+
+ 
  #define CHG_LIMIT_POLL_MS		20000
  #define CHG_LIMIT_AUTO_HYST		5	/* resume this far below the end threshold */
- 
-@@ -61,6 +68,7 @@ struct pm7250b_chg {
+@@ -61,6 +82,7 @@ struct pm7250b_chg {
  	struct device *dev;
  	struct regmap *regmap;
  	struct power_supply *psy;
@@ -24,7 +47,52 @@ index 480aa56f9..f5de6c6d0 100644
  	struct power_supply *gauge;	/* optional, for the charge limit */
  	struct delayed_work limit_work;
  	struct mutex lock;	/* protects the fields below and the enable bit */
-@@ -372,6 +380,184 @@ static const struct power_supply_desc pm7250b_chg_desc = {
+@@ -240,13 +262,43 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
+ 	}
+ }
+ 
++static void pm7250b_chg_tune_fast_charge(struct pm7250b_chg *chg)
++{
++	unsigned int apsd = 0, icl = 0, fcc = 0;
++
++	/* Allow autonomous HVDCP (QC2.0/QC3.0) negotiation on dedicated chargers */
++	regmap_update_bits(chg->regmap, chg->base + USBIN_OPTIONS_1_CFG,
++			   HVDCP_EN_BIT | HVDCP_AUTONOMOUS_MODE_EN_BIT,
++			   HVDCP_EN_BIT | HVDCP_AUTONOMOUS_MODE_EN_BIT);
++
++	if (pm7250b_chg_read(chg, APSD_RESULT_STATUS, &apsd))
++		return;
++
++	if (!(apsd & (APSD_QC_3P0_BIT | APSD_QC_2P0_BIT |
++		      APSD_DCP_CHARGER_BIT | APSD_CDP_CHARGER_BIT)))
++		return;
++
++	if (!pm7250b_chg_read(chg, USBIN_CURRENT_LIMIT_CFG, &icl) &&
++	    icl < PM7250B_FAST_ICL_3000MA)
++		regmap_write(chg->regmap, chg->base + USBIN_CURRENT_LIMIT_CFG,
++			     PM7250B_FAST_ICL_3000MA);
++
++	if (!pm7250b_chg_read(chg, CHGR_FAST_CHARGE_CURRENT_CFG, &fcc) &&
++	    fcc < PM7250B_FAST_FCC_3500MA)
++		regmap_write(chg->regmap,
++			     chg->base + CHGR_FAST_CHARGE_CURRENT_CFG,
++			     PM7250B_FAST_FCC_3500MA);
++}
++
+ static void pm7250b_chg_limit_work(struct work_struct *work)
+ {
+ 	struct pm7250b_chg *chg = container_of(to_delayed_work(work),
+ 					       struct pm7250b_chg, limit_work);
+ 
+ 	mutex_lock(&chg->lock);
+-	pm7250b_chg_limit_eval(chg);
++	pm7250b_chg_tune_fast_charge(chg);
++	if (chg->gauge)
++		pm7250b_chg_limit_eval(chg);
+ 	mutex_unlock(&chg->lock);
+ 
+ 	schedule_delayed_work(&chg->limit_work,
+@@ -372,6 +424,184 @@ static const struct power_supply_desc pm7250b_chg_desc = {
  	.property_is_writeable = pm7250b_chg_writeable,
  };
  
@@ -209,15 +277,21 @@ index 480aa56f9..f5de6c6d0 100644
  static int pm7250b_chg_probe(struct platform_device *pdev)
  {
  	struct power_supply_config cfg = {};
-@@ -438,6 +624,11 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
+@@ -438,9 +668,14 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, PTR_ERR(chg->psy),
  				     "failed to register power supply\n");
  
+-	if (chg->gauge)
+-		schedule_delayed_work(&chg->limit_work,
+-				      msecs_to_jiffies(CHG_LIMIT_POLL_MS));
 +	chg->bat_psy = devm_power_supply_register(dev, &pm7250b_bat_desc, &cfg);
 +	if (IS_ERR(chg->bat_psy))
 +		dev_warn(dev, "failed to register battery supply: %pe\n",
 +			 chg->bat_psy);
 +
- 	if (chg->gauge)
- 		schedule_delayed_work(&chg->limit_work,
- 				      msecs_to_jiffies(CHG_LIMIT_POLL_MS));
++	pm7250b_chg_tune_fast_charge(chg);
++	schedule_delayed_work(&chg->limit_work,
++			      msecs_to_jiffies(CHG_LIMIT_POLL_MS));
+ 
+ 	return 0;
+ }

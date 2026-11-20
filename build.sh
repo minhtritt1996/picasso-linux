@@ -291,6 +291,16 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bluetooth delta to export)"
 	fi
+	local p16="picasso/0016-power-supply-qcom-pm7250b-add-qg-battery.patch"
+	echo "==> Exporting $p16"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/power/supply/qcom_pm7250b_charger.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$p16"
+	else
+		rm -f "$t"
+		echo "    (no pm7250b_charger delta to export)"
+	fi
 	local pw="picasso/0017-ASoC-wcd938x-guard-sdw-capture-ports.patch"
 	echo "==> Exporting $pw"
 	t=$(mktemp)
