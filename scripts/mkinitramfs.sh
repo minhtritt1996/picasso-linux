@@ -56,7 +56,10 @@ if [ -f "$KMOD/modules.order" ]; then
 fi
 
 # ath10k WCN3990 metadata container (60 bytes; modem supplies WLAN firmware via TFTP)
-if [ -f /lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin ]; then
+if [ -f "$ROOT/prebuilt/fw-wcn3990/firmware-5.bin" ]; then
+	mkdir -p "$TMP/lib/firmware/ath10k/WCN3990/hw1.0"
+	cp "$ROOT/prebuilt/fw-wcn3990/firmware-5.bin" "$TMP/lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin"
+elif [ -f /lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin ]; then
 	mkdir -p "$TMP/lib/firmware/ath10k/WCN3990/hw1.0"
 	cp /lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin "$TMP/lib/firmware/ath10k/WCN3990/hw1.0/firmware-5.bin"
 fi

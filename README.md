@@ -147,6 +147,11 @@ build/                      cây build cô lập + build/out/ (gitignored)
 
 ## Build
 
+Trước khi đóng gói `initrd` / `bootimg`, cần đặt các blob độc quyền (bị gitignore) đúng vị trí:
+- Firmware GPU/Touch/Wi-Fi (`prebuilt/fw-*/`): xem [`prebuilt/README.md`](prebuilt/README.md)
+- UEFI (`uefi/SILICIUM_UEFI.fd`, `uefi/picasso.dtb`): xem [`uefi/README.md`](uefi/README.md)
+- Modem/QRTR helpers (`initramfs/bin/`): xem [`initramfs/bin/README.md`](initramfs/bin/README.md)
+
 ```sh
 ./build.sh linux                # Image + sm7250-xiaomi-picasso.dtb → build/out/
 ./build.sh loader               # linux.efi (patched XnuLoader) → build/out/
