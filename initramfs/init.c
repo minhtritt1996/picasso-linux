@@ -1546,6 +1546,8 @@ static int switch_to_partition(const char *part)
 		klog("root: no partition named %s\n", part);
 		return -1;
 	}
+	if (strcmp(part, "userdata") == 0)
+		umount("/userdata");
 	mkdir("/newroot", 0755);
 	if (mount(dev, "/newroot", "ext4", 0, NULL)) {
 		klog("root: %s (%s) mount failed: %s\n", part, dev, strerror(errno));
@@ -1634,7 +1636,7 @@ static void try_udev_root(void)
 	/* the system on UFS is the default; picasso.noswitch keeps the ramdisk,
 	 * but still shows what the last hand-over wrote to its boot log */
 	if (cmdline_flag("picasso.noswitch")) {
-		const char *parts[] = { "denial", "linux" };
+		const char *parts[] = { "denial", "linux", "userdata" };
 		char dev[64];
 		int i;
 
@@ -1658,6 +1660,7 @@ static void try_udev_root(void)
 	(void)tried;
 	switch_to_partition("denial");
 	switch_to_partition("linux");
+	switch_to_partition("userdata");
 	klog("root: no bootable system on UFS, staying in the ramdisk\n");
 }
 
