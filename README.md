@@ -208,11 +208,8 @@ Mô tả đầy đủ: [`.github/workflows/README.md`](.github/workflows/README.
 
 ---
 
-## Tài liệu tham chiếu
+## Nguồn tham chiếu
 
-- [`docs/mainline-linux-plan.md`](docs/mainline-linux-plan.md) — kế hoạch kỹ thuật & milestone
-- [`docs/dts-crosswalk.md`](docs/dts-crosswalk.md) — nguồn gốc từng DT node
-- [`STATUS.md`](STATUS.md) — log chi tiết từng hardware boot (boot #1 → #220)
-- [`AGENTS.md`](AGENTS.md) — quy tắc bất biến cho agent
-- [lazybrar/avicii-mainline](https://github.com/lazybrar/avicii-mainline) — reference port SM7250 (OnePlus Nord)
-- `~/droidian` — downstream 4.19 chạy thật, oracle cho DT/regulator/clock value
+- [lazybrar/avicii-mainline](https://github.com/lazybrar/avicii-mainline) — mainline Linux cho OnePlus Nord (`avicii`), cùng SoC SM7250; base `v7.3-rc7`, 14 patch theo subsystem
+- [oosexgang/hakios-xnu-kernel](https://github.com/oosexgang/hakios-xnu-kernel) — XnuLoader (EFI launcher) và Mu-Silicium UEFI cho HakiOS
+- [YinCQL/UniXNU-picasso](https://github.com/YinCQL/UniXNU-picasso) — port XNU/UniXNU cho picasso, nguồn tham chiếu init sequence và driver hint
