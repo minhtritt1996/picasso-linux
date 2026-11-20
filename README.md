@@ -61,7 +61,7 @@ Không ghi UFS. Không flash. Mọi thứ sống trong RAM.
 ## Layout
 
 ```text
-upstream/linux              torvalds/linux v7.3-rc7, pinned (read-only, gitignored)
+upstream/linux              linux-stable v7.3.5, pinned (read-only, gitignored)
 upstream/avicii-mainline    reference SM7250 port — OnePlus Nord (read-only, gitignored)
 upstream/hakios-xnu-kernel  XnuLoader source cho EFI launcher (read-only, gitignored)
 

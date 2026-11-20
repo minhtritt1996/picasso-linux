@@ -1,7 +1,7 @@
 #!/bin/bash
 # mainline-linux-picasso build driver.
 #
-# Builds mainline Linux (pinned v7.3-rc7) with the vendored avicii SM7250 port plus this
+# Builds mainline Linux (pinned v7.3.5) with the vendored avicii SM7250 port plus this
 # device's patches, from read-only ./upstream into ./build. Never touches upstream/.
 #
 #   ./build.sh linux [--clean]     Image + sm7250-xiaomi-picasso.dtb -> build/out/
@@ -28,7 +28,7 @@ REF_UP="$UP/avicii-mainline"
 LOADER_UP="$UP/hakios-xnu-kernel"
 LOADER_WS="$BUILD/loader"
 
-LINUX_REV="24a19b953e2a3d0ea5a8c4951a0ab8f32720c907"
+LINUX_REV="988117cc1bb17338c586a4e21ade88b5397eac33"
 REF_REV="71944476a1394d0e6faa6ee95fb157a29dce6943"
 LOADER_REV="96ffbc532e970f3540885755d457e401e04d4707"
 
@@ -45,7 +45,7 @@ usage() {
 
 verify_upstream() {
 	local rev
-	[ -d "$LINUX_UP/.git" ] || die "missing $LINUX_UP (git clone --branch v7.3-rc7 --depth 1 https://github.com/torvalds/linux.git upstream/linux)"
+	[ -d "$LINUX_UP/.git" ] || die "missing $LINUX_UP (git clone --branch v7.3.5 --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git upstream/linux)"
 	[ -d "$REF_UP/.git" ] || die "missing $REF_UP (git clone --depth 1 https://github.com/lazybrar/avicii-mainline.git upstream/avicii-mainline)"
 	rev=$(git -C "$LINUX_UP" rev-parse HEAD)
 	[ "$rev" = "$LINUX_REV" ] || die "upstream/linux HEAD is $rev, expected $LINUX_REV"

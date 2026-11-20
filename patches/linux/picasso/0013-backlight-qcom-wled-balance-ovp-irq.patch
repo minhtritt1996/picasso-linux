@@ -33,12 +33,12 @@ index 650dd95f0..00e9c3eec 100644
  		}
  	}
  
-@@ -1649,8 +1653,10 @@ static int wled_configure_ovp_irq(struct wled *wled,
- 		return rc;
+@@ -1643,8 +1647,10 @@ static int wled_configure_ovp_irq(struct wled *wled,
+ 	}
  
- 	/* Keep OVP irq disabled until module is enabled */
--	if (!(val & WLED3_CTRL_REG_MOD_EN_MASK))
-+	if (!(val & WLED3_CTRL_REG_MOD_EN_MASK)) {
+ 	/* Keep the OVP irq disabled until the module is enabled */
+-	if (!wled->brightness)
++	if (!wled->brightness) {
  		disable_irq(wled->ovp_irq);
 +		wled->ovp_irq_disabled = true;
 +	}

@@ -1,9 +1,9 @@
 # Upstream base repositories and revisions for picasso-linux patches
 
 linux:
-  repository: https://github.com/torvalds/linux.git
-  revision:   24a19b953e2a3d0ea5a8c4951a0ab8f32720c907   # v7.3-rc7 (tag object ec8bf82)
-  tag:        v7.3-rc7
+  repository: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+  revision:   988117cc1bb17338c586a4e21ade88b5397eac33   # v7.3.5 (tag object 753f54c)
+  tag:        v7.3.5
 
 avicii-mainline:
   repository: https://github.com/lazybrar/avicii-mainline.git

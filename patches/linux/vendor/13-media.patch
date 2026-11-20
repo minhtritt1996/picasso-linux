@@ -424,9 +424,9 @@ diff --git a/drivers/media/platform/qcom/venus/core.c b/drivers/media/platform/q
 index 243e342b0..5edba041b 100644
 --- a/drivers/media/platform/qcom/venus/core.c
 +++ b/drivers/media/platform/qcom/venus/core.c
-@@ -377,6 +377,19 @@ static int venus_add_dynamic_nodes(struct venus_core *core)
- static void venus_remove_dynamic_nodes(struct venus_core *core) {}
- #endif
+@@ -428,6 +428,19 @@ static int venus_reserve_iova_region(struct device *dev, struct dma_iova_state *
+ 	return ret;
+ }
  
 +/*
 + * The interconnect paths are only used for bandwidth votes. Allow platforms
