@@ -1,0 +1,20 @@
+diff --git a/drivers/clk/qcom/camcc-sm7250.c b/drivers/clk/qcom/camcc-sm7250.c
+index db3a51f9f..933b94a2a 100644
+--- a/drivers/clk/qcom/camcc-sm7250.c
++++ b/drivers/clk/qcom/camcc-sm7250.c
+@@ -171,11 +171,11 @@ static struct clk_alpha_pll_postdiv cam_cc_pll1_out_even = {
+ static const struct alpha_pll_config cam_cc_pll2_config = {
+ 	.l = 0x32,
+ 	.alpha = 0x0,
+-	.config_ctl_val = 0x08200920,
+-	.config_ctl_hi_val = 0x15008001,
+-	.config_ctl_hi1_val = 0x00000000,
++	.config_ctl_val = 0x38200920,
++	.config_ctl_hi_val = 0x15002001,
++	.config_ctl_hi1_val = 0x80000000,
+ 	.user_ctl_val = 0xE0000101,
+-	.test_ctl_val = 0x00010000,
++	.test_ctl_val = 0x00000000,
+ 	.test_ctl_hi_val = 0x00000000,
+ 	.test_ctl_hi1_val = 0x00000000,
+ };

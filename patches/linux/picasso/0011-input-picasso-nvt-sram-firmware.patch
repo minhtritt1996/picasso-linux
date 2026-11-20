@@ -1044,10 +1044,10 @@ index 000000000..44c27716a
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/input/touchscreen/picasso-nvt-vendor.c b/drivers/input/touchscreen/picasso-nvt-vendor.c
 new file mode 100644
-index 000000000..fe21bcf42
+index 000000000..2a68e6a49
 --- /dev/null
 +++ b/drivers/input/touchscreen/picasso-nvt-vendor.c
-@@ -0,0 +1,1210 @@
+@@ -0,0 +1,1243 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Novatek NT36672C touchscreen on the Xiaomi Redmi K30 5G (picasso, SM7250):
@@ -1151,7 +1151,7 @@ index 000000000..fe21bcf42
 +#define NVT_STATE_MAX		0xaf
 +
 +#define NVT_POLL_MS		20
-+#define NVT_POLL_MS_IRQ		100
++#define NVT_POLL_MS_IRQ		2000
 +#define NVT_BRINGUP_TRIES	3
 +#define NVT_BRINGUP_RETRY_MS	5000
 +/* How long normal run (0xA3) may take once the image verifies. */
@@ -1274,6 +1274,8 @@ index 000000000..fe21bcf42
 +	bool irq_note;
 +	struct notifier_block panel_nb;
 +	u32 polls_since_health;
++	u32 cur_page;
++	bool page_valid;
 +	u32 slots;			/* slots reported as down, bit per slot */
 +	u16 last_x[NVT_MAX_FINGERS];
 +	u16 last_y[NVT_MAX_FINGERS];
@@ -1301,6 +1303,7 @@ index 000000000..fe21bcf42
 +		if (!ret)
 +			return 0;
 +	}
++	ts->page_valid = false;
 +	dev_err(&ts->spi->dev, "spi write of %zu bytes failed: %d\n", len, ret);
 +	return -EIO;
 +}
@@ -1333,6 +1336,7 @@ index 000000000..fe21bcf42
 +			break;
 +	}
 +	if (ret) {
++		ts->page_valid = false;
 +		dev_err(&ts->spi->dev, "spi read of %zu bytes at %#x failed: %d\n",
 +			len, addr, ret);
 +		return -EIO;
@@ -1343,9 +1347,21 @@ index 000000000..fe21bcf42
 +
 +static int nvt_set_page(struct nvt_ts *ts, u32 addr)
 +{
++	u32 page_id = (addr >> 7) & 0xffff;
 +	u8 page[3] = { 0xff, (addr >> 15) & 0xff, (addr >> 7) & 0xff };
++	int ret;
 +
-+	return nvt_spi_write(ts, page, sizeof(page));
++	if (ts->page_valid && ts->cur_page == page_id)
++		return 0;
++
++	ret = nvt_spi_write(ts, page, sizeof(page));
++	if (!ret) {
++		ts->cur_page = page_id;
++		ts->page_valid = true;
++	} else {
++		ts->page_valid = false;
++	}
++	return ret;
 +}
 +
 +static int nvt_write_addr(struct nvt_ts *ts, u32 addr, u8 val)
@@ -1407,6 +1423,7 @@ index 000000000..fe21bcf42
 +{
 +	int ret;
 +
++	ts->page_valid = false;
 +	/* Vendor holds TP_RESX low around the engineering reset. */
 +	if (ts->reset_gpio) {
 +		gpiod_set_value_cansleep(ts->reset_gpio, 1);
@@ -1417,6 +1434,7 @@ index 000000000..fe21bcf42
 +		gpiod_set_value_cansleep(ts->reset_gpio, 0);
 +		mdelay(10);	/* tRT2BRST */
 +	}
++	ts->page_valid = false;
 +	return ret;
 +}
 +
@@ -1426,10 +1444,12 @@ index 000000000..fe21bcf42
 +{
 +	int ret;
 +
++	ts->page_valid = false;
 +	ret = nvt_write_addr(ts, ts->swrst_n8_addr, NVT_SWRST_BOOT);
 +	if (ret)
 +		return ret;
 +	mdelay(5);		/* tBRST2FR */
++	ts->page_valid = false;
 +	if (ts->spi_rd_fast_addr)
 +		return nvt_write_addr(ts, ts->spi_rd_fast_addr, 0x00);
 +	return 0;
@@ -1902,25 +1922,44 @@ index 000000000..fe21bcf42
 +	return IRQ_HANDLED;
 +}
 +
-+/* The interrupt pad lives in a TLMM tile this port does not fully map, so a
-+ * timer reads the same report pipe and the IRQ only shortens the latency. */
++/*
++ * Once the touch IRQ is live, the threaded IRQ handler reads every report at
++ * the controller's full scan rate and the worker only performs idle health
++ * checks so a kworker never contends on ts->lock during active touch.
++ */
 +static void nvt_poll_work(struct work_struct *work)
 +{
 +	struct nvt_ts *ts = container_of(to_delayed_work(work), struct nvt_ts,
 +					 poll);
 +	unsigned int interval = NVT_POLL_MS;
++	bool check_health = false;
 +
 +	mutex_lock(&ts->lock);
 +	if (!ts->suspended) {
-+		nvt_fetch_report(ts);
++		if (!ts->irq_count) {
++			nvt_fetch_report(ts);
++			if (!(++ts->polls_since_health % NVT_HEALTH_POLLS))
++				check_health = true;
++		} else {
++			if (!ts->irq_note) {
++				ts->irq_note = true;
++				dev_info(&ts->spi->dev,
++					 "irq is live (%u), health check every %d ms\n",
++					 ts->irq_count, NVT_POLL_MS_IRQ);
++			}
++			if (!ts->slots)
++				check_health = true;
++			interval = NVT_POLL_MS_IRQ;
++		}
 +		/*
 +		 * Any panel prepare (DPMS on, resume, a blanking cycle) pulses
 +		 * the shared TDDI reset and leaves a deaf bootloader behind.
 +		 * Notice that here and feed the controller again.
 +		 */
-+		if (!(++ts->polls_since_health % NVT_HEALTH_POLLS)) {
++		if (check_health) {
 +			u8 st = 0;
 +
++			ts->page_valid = false;
 +			if (!nvt_read_mapped(ts, ts->map->event_buf |
 +					     NVT_EVENT_RESET_STATE, &st, 1) &&
 +			    st < NVT_STATE_NORMAL &&
@@ -1932,15 +1971,7 @@ index 000000000..fe21bcf42
 +						      msecs_to_jiffies(NVT_PANEL_SETTLE_MS));
 +			}
 +		}
-+		if (ts->irq_count && !ts->irq_note) {
-+			ts->irq_note = true;
-+			dev_info(&ts->spi->dev,
-+				 "irq is live (%u), polling every %d ms\n",
-+				 ts->irq_count, NVT_POLL_MS_IRQ);
-+		}
 +	}
-+	if (ts->irq_count)
-+		interval = NVT_POLL_MS_IRQ;
 +	mutex_unlock(&ts->lock);
 +	schedule_delayed_work(&ts->poll, msecs_to_jiffies(interval));
 +}
@@ -2047,6 +2078,7 @@ index 000000000..fe21bcf42
 +	cancel_delayed_work_sync(&ts->poll);
 +	mutex_lock(&ts->lock);
 +	ts->suspended = true;
++	ts->page_valid = false;
 +	/* Vendor: host command 0x11 puts the controller into deep sleep. */
 +	nvt_write_addr(ts, ts->map->event_buf | NVT_EVENT_HOST_CMD, 0x11);
 +	input_mt_sync_frame(ts->input);
@@ -2067,6 +2099,7 @@ index 000000000..fe21bcf42
 +
 +	mutex_lock(&ts->lock);
 +	ts->suspended = false;
++	ts->page_valid = false;
 +	ts->bringup_attempts = 0;
 +	mutex_unlock(&ts->lock);
 +	/*

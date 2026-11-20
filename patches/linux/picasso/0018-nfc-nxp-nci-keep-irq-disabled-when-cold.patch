@@ -1,0 +1,46 @@
+diff --git a/drivers/nfc/nxp-nci/i2c.c b/drivers/nfc/nxp-nci/i2c.c
+index 92ce096e9..dd61d6a1b 100644
+--- a/drivers/nfc/nxp-nci/i2c.c
++++ b/drivers/nfc/nxp-nci/i2c.c
+@@ -37,6 +37,7 @@ struct nxp_nci_i2c_phy {
+ 	struct gpio_desc *gpiod_en;
+ 	struct gpio_desc *gpiod_fw;
+ 
++	bool irq_enabled;
+ 	int hard_fault; /*
+ 			 * < 0 if hardware error occurred (e.g. i2c err)
+ 			 * and prevents normal operation.
+@@ -48,12 +49,22 @@ static int nxp_nci_i2c_set_mode(void *phy_id,
+ {
+ 	struct nxp_nci_i2c_phy *phy = (struct nxp_nci_i2c_phy *) phy_id;
+ 
++	if (mode == NXP_NCI_MODE_COLD && phy->irq_enabled) {
++		disable_irq(phy->i2c_dev->irq);
++		phy->irq_enabled = false;
++	}
++
+ 	gpiod_set_value_cansleep(phy->gpiod_fw, (mode == NXP_NCI_MODE_FW) ? 1 : 0);
+ 	gpiod_set_value_cansleep(phy->gpiod_en, (mode != NXP_NCI_MODE_COLD) ? 1 : 0);
+ 	usleep_range(10000, 15000);
+ 
+-	if (mode == NXP_NCI_MODE_COLD)
++	if (mode == NXP_NCI_MODE_COLD) {
++		phy->hard_fault = 0;
++	} else if (!phy->irq_enabled) {
+ 		phy->hard_fault = 0;
++		enable_irq(phy->i2c_dev->irq);
++		phy->irq_enabled = true;
++	}
+ 
+ 	return 0;
+ }
+@@ -330,6 +341,9 @@ static int nxp_nci_i2c_probe(struct i2c_client *client)
+ 			irqflags = IRQF_TRIGGER_RISING;
+ 	}
+ 
++	irq_set_status_flags(client->irq, IRQ_NOAUTOEN);
++	phy->irq_enabled = false;
++
+ 	r = request_threaded_irq(client->irq, NULL,
+ 				 nxp_nci_i2c_irq_thread_fn,
+ 				 irqflags | IRQF_ONESHOT,

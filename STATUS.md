@@ -2635,3 +2635,201 @@ SPI 166 one, and the mainline `qcom-soundwire` driver does support it (`of_irq_g
 Remaining hypothesis for the Alert: a TX-specific master/slave protocol difference - the DIN-only
 master's command/read sequencing, the port tables (ours are the sm8250 ones reused verbatim), or the
 codec's TX slave programming - not the interrupt wiring.
+
+### 28. Microphone, NFC, and GPS/GNSS — ALL WORKING on live hardware (2026-11-17)
+
+Verified via RAM boot (`#213`, `<lan-ip>`, cmdline
+`console=tty0 loglevel=7 selinux=0 picasso_pinmux.mode=write rdinit=/init auto_reboot=0 systemd.show_status=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10`):
+
+1. **Microphone (`0019*`, `0020*`, `tools/init.c`) — WORKING**:
+   - Root cause of `-EIO` in `sound/soc/qcom/qdsp6/q6afe.c` (`q6afe_cdc_dma_port_prepare()`): when
+     `q6dma_set_channel_map()` populated a non-zero `cfg->active_channels_mask` from
+     `tx_macro_get_channel_map()`, `if (!cfg->active_channels_mask)` skipped setting
+     `dma_cfg->active_channels_mask`, leaving it `0` so the ADSP started `TX_CODEC_DMA_TX_3` with
+     zero active channels. Added the `else dma_cfg->active_channels_mask = cfg->active_channels_mask;`
+     branch (`0019-ASoC-q6afe-preserve-active-channels-mask.patch`).
+   - Root cause of `sdw:3:0:0217:010d:00:3` (`Alert`): `qcom_swrm_get_alert_slave_dev_num()` never
+     updated `ctrl->slave_status`, and after `SCP_INT1` cleared, SWRM v1.5.1 returned to `0x04`
+     (`SDW_SLAVE_ATTACHED`) without a second `CHANGE_ENUM_SLAVE_STATUS` IRQ. Updated
+     `drivers/soundwire/qcom.c` (`0020-soundwire-qcom-resync-slave-status-after-alert.patch`) to
+     record `ctrl->slave_status` and resync `sdw_handle_slave_status()` when `SDW_SLAVE_ATTACHED` is
+     observed.
+   - `tools/init.c` updated (`Picasso-HiFi.conf` `SectionVerb` + `SectionDevice."Mic"` on `hw:${CardId},1`
+     mono `AMIC1`/`ADC1`/`DEC0`, plus WirePlumber `50-picasso-alsa.conf` `alsa_input.*` `S16LE`/`48000`/1ch)
+     so `MultiMedia2` backend routing is armed before ACP probes PCMs.
+   - **Verified on `#213` fresh boot**:
+     - `/sys/bus/soundwire/devices/sdw:2:0:0217:010d:00:4` (`RX`) = `Attached`,
+       `sdw:3:0:0217:010d:00:3` (`TX`) = `Attached`.
+     - `wpctl status` exposes both `Built-in Audio Speaker` and `Built-in Audio Internal Microphone`.
+     - `pw-record --format=s16 --rate=48000 --channels=1 /tmp/pw_boot.wav` captures 187,392 samples
+       (`min=-89 max=69 rms=19.51`).
+     - Hardware gain test on `#212` `arecord -D hw:0,1` (`ADC1 Volume` 0 vs 20): `rms=8.27` vs
+       `28.22` (3.41x scaling), zero `-EIO`, zero `SWR read enable valid mismatch`.
+
+2. **NFC (`0002*` `&tlmm`, `0018*`) — WORKING**:
+   - Removed the `reg = "south"` override on `&tlmm` in `sm7250-xiaomi-picasso.dts` (`0002*`) and
+     added `gpio-reserved-ranges = <0 4>, <59 4>;` (matching `sm7250-oneplus-avicii.dts:488` for
+     TZ-owned SE1 `gpio0-3` and SE6/QUP10 `gpio59-62`), enabling all 3 TLMM tiles (`south`, `west`,
+     `east`) and arming `tlmm 34` (EAST, PDC 53).
+   - Fixed cold-mode IRQ storm in `drivers/nfc/nxp-nci/i2c.c`
+     (`0018-nfc-nxp-nci-keep-irq-disabled-when-cold.patch`): `picasso-pinmux.c` sets `bias-pull-up`
+     on `gpio 34`, so probing with `VEN=0` (`NXP_NCI_MODE_COLD`) and `IRQ_TYPE_LEVEL_HIGH` previously
+     caused an 11M+ IRQ storm and latched `phy->hard_fault = -EREMOTEIO`. Now marks `IRQ_NOAUTOEN`
+     in probe and gates `enable_irq`/`disable_irq` across `NXP_NCI_MODE_COLD` transitions.
+   - **Verified on `#213`**:
+     - `msmgpio 34` idle count = `0` (zero IRQ storm).
+     - NFC Generic Netlink lifecycle on `nfc0`: `NFC_CMD_DEV_UP` (`0`), `NFC_CMD_START_POLL(0xfe)` (`0`),
+       `NFC_CMD_STOP_POLL` (`0`), `NFC_CMD_DEV_DOWN` (`0`), with `msmgpio 34` incrementing cleanly to `10`.
+
+3. **GPS / GNSS (`tools/gnss/picasso-gnss.c`, `tools/mkinitramfs.sh`, `tools/init.c`) — WORKING**:
+   - Added persistent single-socket `AF_QIPCRTR` QMI LOC daemon (`tools/gnss/picasso-gnss.c`), compiled
+     into initramfs `/bin/picasso-gnss` and started automatically at boot via
+     `/run/systemd/system/picasso-gnss.service`.
+   - Solves `Get Engine Lock = 3` (`Set Engine Lock = NONE`), NMEA bitmask (`0x7F` instead of
+     `0xFFFF`), stale pre-NTP `STA_UNSYNC` time injection poisoning, and auto-restart on indoor
+     `pos_status=3` timeouts.
+   - **Verified on `#213` fresh boot**:
+     - `systemctl is-active picasso-gnss` = `active` (`engine_state=1`, `session_state=1`,
+       `position_status=1`), `/run/gnss.status` shows `sv_count=2`, `nmea_lines=12` (`$GPGSV` at 1 Hz,
+       `GPS:17 snr=28..31` indoors).
+
+4. **Gates & Final Artifact SHA-256**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 35 patches applied`, `dtbs_check: 16 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `d8daa4d9a1b65361052a60025281c0ae1c4e9bd6d383fabeac946a1b9d2d2eac`
+   - `build/out/initrd.cpio.gz`: `ca9061c651d7174abc8dd6b6e085615bdaddad74bd35ff1d404419285496b429`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `f1f080e67ef9d30b83ac42a5e7318053e9dcec3465580152bd348b8e7e596138`
+   - `build/out/boot-linux.img`: `ff6fa33adb448fb94f980bbe9caa91175888174bee2888b6078be16e67252847`
+   - `build/out/payload-linux.bin`: `8007f6ecdbef3b52749884e57f7a5533d75c0a72f8e7cf7904e07d8a30ccd283`
+
+### 29. Camera (eGPIO, `camcc` v2 PLL2, `qcom-camss`, `ov8856` Capture & All-Sensor CCI IDs) — WORKING on live hardware (2026-11-18)
+
+Verified via RAM boots `#215`–`#217` (`<lan-ip>`, cmdline
+`console=tty0 loglevel=7 selinux=0 picasso_pinmux.mode=write rdinit=/init auto_reboot=0 systemd.show_status=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10`):
+
+1. **Root causes fixed**:
+   - **eGPIO ownership (`0021-pinctrl-sm7250-egpio-ownership.patch`, `0007*`)**: SM7250 GPIOs `115..145`
+     have `egpio_present = BIT(11)` (`0x800`) and `egpio_enable = BIT(12)` (`0x1000`). Mainline
+     `pinctrl-sm7250.c` lacked `.egpio_enable = 12`, `.egpio_present = 11`, and `.egpio_func = 10`,
+     leaving camera rail GPIOs (`gpio122` UW VANA, `gpio126` UW VDIG, `gpio127` wide VANA) owned by
+     eGPIO so APPS `gpiod_set_value` did not toggle the physical pads. Added eGPIO ownership fields
+     to `pinctrl-sm7250.c` (`0021*`), `BIT(12)` claim in `picasso-pinmux.c` (`0007*`), and DT
+     `pinctrl-0` (`cam_uw_vana_en`, `cam_uw_vdig_en`, `cam_uw_reset_default`) in `0002*`.
+   - **`qcom-camss` MMIO overlap (`0001*`)**: `sm7250.dtsi` had `vfe0` (`0x0acaf000 0x5200`) and
+     `vfe1` (`0x0acb6000 0x5200`), overlapping `csid0` (`0x0acb3000`) and `csid1` (`0x0acba000`) and
+     causing `devm_platform_ioremap_resource_byname` to fail with `-EBUSY` (`-16`). Trimmed `vfe0`
+     and `vfe1` register sizes to `0x4000` (matching `vfe_lite`; `camss-vfe-17x.c` offsets `< 0x3900`).
+   - **`camcc` SM7250 v2.0 Zonda PLL2 (`0022-clk-qcom-camcc-sm7250-pll2-v2.patch`)**: Hardware reports
+     `soc0/soc_id = 400`, `revision = 2.0`; updated `cam_cc_pll2_config` to `camcc-lito.c` v2 values
+     (`0x38200920`, `0x15002001`, `0x80000000`, `test_ctl_val = 0`).
+   - **PM8008 & MCLK root cause**: `i2cdetect -y -r 1` (`98c000.i2c`) answers only `0x66` (`bq25970`);
+     PM8008 (`0x08`) is absent. All 6 sensors use `19.2 MHz` (`P_BI_TCXO`) MCLKs and require
+     `TITAN_TOP_GDSC` ON when gating `cam_cc_mclk0..4_clk`.
+   - **Board DT & Kconfig (`0002*`, `configs/linux/picasso.config`)**: Built in
+     `CONFIG_VIDEO_QCOM_CAMSS=y` and `CONFIG_VIDEO_OV8856=y`; enabled `&camss` (`port@0` 2-lane D-PHY),
+     `ov8856` (`camera@10` on `&cci1_i2c0`, `MCLK2` `gpio15` 6 mA @ `19.2 MHz`, `reset-gpios = <&tlmm 30 GPIO_ACTIVE_LOW>`),
+     and `camera_uw_vana_2p8` (`gpio122`), `camera_uw_vdig_1p2` (`gpio126`), `camera_macro_vana_2p8` (`gpio56`).
+
+2. **Hardware Verification (`#216` all-sensor IDs + `#217` clean production capture)**:
+   - **All 6 sensor Chip IDs & 5 MCLKs (`#216`, with `TITAN_TOP_GDSC = on` & `cam_cc_mclk0..4_clk` at `19200000` Hz)**:
+     - `i2c-3` (`cci0_i2c0`): `s5k3t2` @ `0x56` (`w2 0x00 0x00 r2` = `0x31 0x42`), rear `gc02m1` @ `0x37` (`0xf0`/`0xf1` = `0x02 0xe0`), EEPROM `0x50`.
+     - `i2c-4` (`cci0_i2c1`): `imx686` @ `0x1a` (`w2 0x00 0x16 r2` = `0x06 0x86`), front `gc02m1` @ `0x10` (`0xf0`/`0xf1` = `0x02 0xe0`), actuator `0x0c`, EEPROM `0x51`.
+     - `i2c-5` (`cci1_i2c0`): `ov8856` @ `0x10` (`UU`, `w2 0x30 0x0a r3` = `0x00 0x88 0x5a`), `s5k5e9yx04` @ `0x2d` (`w2 0x00 0x00 r2` = `0x55 0x9b`), actuator `0x0c`, EEPROMs `0x51`/`0x52`.
+   - **MIPI CSI-2 Capture (`#217` clean kernel, zero `clk_branch_toggle` / `-EBUSY` / probe errors)**:
+     - Pipeline `"ov8856 5-0010":0 -> "msm_csiphy0":0 -> "msm_csid0":0 -> "msm_vfe0_rdi0":0 -> /dev/video0`
+       configured at `SGRBG10_1X10/3280x2464` (`pixelformat=pgAA`).
+     - `v4l2-ctl -d /dev/video0 --stream-mmap=4 --stream-count=5 --stream-to=/tmp/ov8856_final.raw`
+       captured **5/5 frames** (`50,659,840` bytes = `5 * 10,131,968`, `nonzero=63112/65536`, `min=0, max=252`);
+       `test_pattern=1` color-bar capture (`#215`) confirmed exact Bayer bar pixels (`0xff...` / `ffcc00ff00...`).
+
+3. **Gates & Final Artifact SHA-256**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 37 patches applied`, `dtbs_check: 16 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `ac488f8ff6ef0e3b76698e830cd1aa9c66ae40dd136460b83048ccc975033b24`
+   - `build/out/initrd.cpio.gz`: `ca9061c651d7174abc8dd6b6e085615bdaddad74bd35ff1d404419285496b429`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `1c719d42c1e8e7efb44292c52da2064b72bd0d9c1fa9bbc3c509e79e4e72b7f9`
+   - `build/out/boot-linux.img`: `c656930898c18a7700b60ebbb41e6281e9e461e76811f28934b955f888f7f40d`
+   - `build/out/payload-linux.bin`: `c0b3f74efca1736cb873ec0a1bf28cf63bed159b2cbc43cba1078dd5bccfff18`
+
+### 30. All 3 Primary Cameras (`ov8856`, `s5k3t2`, `imx686` C-PHY) — WORKING on live hardware (2026-11-18)
+
+Verified via RAM boot `#219` (`<lan-ip>`, cmdline
+`console=tty0 loglevel=7 selinux=0 picasso_pinmux.mode=write rdinit=/init auto_reboot=0 systemd.show_status=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10`):
+
+1. **Drivers, C-PHY `camss`, DT & Kconfig (`0023*`, `0024*`, `0002*`, `configs/linux/picasso.config`)**:
+   - **Samsung `S5K3T2` (`0024-media-i2c-add-imx686-s5k3t2-drivers.patch`)**: `drivers/media/i2c/s5k3t2.c` on `&cci0_i2c0` (`3-0056`), chip ID `0x3142`, MCLK0 `19.2 MHz`, reset `gpio32`, 4-lane D-PHY -> `camss` `port@2` (`msm_csiphy2`), `SGBRG10_1X10` (`2592x1940` default + `5184x3880`).
+   - **Sony `IMX686` (`0024-media-i2c-add-imx686-s5k3t2-drivers.patch`)**: `drivers/media/i2c/imx686.c` on `&cci0_i2c1` (`4-001a`), chip ID `0x0686`, MCLK1 `19.2 MHz`, reset `gpio29`, 3-trio C-PHY -> `camss` `port@1` (`msm_csiphy1`), `SBGGR10_1X10` (`4624x3472` default with PDAF `dt=0x30` regs zeroed for pure VC0 `dt=0x2b`, plus `4624x2600`, `2312x1300`, `9248x6944`).
+   - **SM7250 C-PHY `qcom-camss` (`0023-media-qcom-camss-add-sm7250-cphy.patch`)**: Added `MEDIA_BUS_TYPE_CSI2_CPHY` (`bus-type = <1>`) in `camss.c`, `lane_regs_sm7250_3ph` in `camss-csiphy-3ph-1-0.c`, and `CSI2_RX_CFG0_PHY_TYPE_SEL` in `camss-csid-gen2.c`.
+   - **Shared GPIO proxy (`configs/linux/picasso.config`)**: Built in `CONFIG_GPIO_SHARED_PROXY=y` (alongside `CONFIG_VIDEO_IMX686=y` and `CONFIG_VIDEO_S5K3T2=y`). Without it, `gpio125` (shared by `camera_front_vana_2p8` / `camera_front_vdig_1p2`) and `gpio127` (shared by `camera_wide_vana_2p8` / `camera_wide_vana2_1p8`) are marked `GPIOD_FLAG_SHARED` by `gpiolib-shared` and stay stuck in `devices_deferred`.
+
+2. **Live Hardware Capture Verification (`#219`, empty `devices_deferred`, zero `camss`/`sensor`/`cci` kernel errors)**:
+   - **`ov8856 5-0010` (`/dev/v4l-subdev17`, `csiphy0` 2-lane D-PHY)**:
+     ```sh
+     media-ctl -d /dev/media0 -r
+     media-ctl -d /dev/media0 -l '"msm_csiphy0":1->"msm_csid0":0[1],"msm_csid0":1->"msm_vfe0_rdi0":0[1]'
+     media-ctl -d /dev/media0 -V '"ov8856 5-0010":0[fmt:SGRBG10_1X10/3280x2464],"msm_csiphy0":0[fmt:SGRBG10_1X10/3280x2464],"msm_csid0":0[fmt:SGRBG10_1X10/3280x2464],"msm_vfe0_rdi0":0[fmt:SGRBG10_1X10/3280x2464]'
+     v4l2-ctl -d /dev/video0 -v width=3280,height=2464,pixelformat=pgAA
+     v4l2-ctl -d /dev/video0 --stream-mmap=4 --stream-count=3 --stream-to=/tmp/ov8856.raw
+     ```
+     Captured **3/3 frames** (`30,395,904` bytes, `sample64k_nonzero=65371/65536`, `min=0, max=255`).
+   - **`s5k3t2 3-0056` (`/dev/v4l-subdev18`, `csiphy2` 4-lane D-PHY)**:
+     ```sh
+     media-ctl -d /dev/media0 -r
+     media-ctl -d /dev/media0 -l '"msm_csiphy2":1->"msm_csid1":0[1],"msm_csid1":1->"msm_vfe1_rdi0":0[1]'
+     media-ctl -d /dev/media0 -V '"s5k3t2 3-0056":0[fmt:SGBRG10_1X10/2592x1940],"msm_csiphy2":0[fmt:SGBRG10_1X10/2592x1940],"msm_csid1":0[fmt:SGBRG10_1X10/2592x1940],"msm_vfe1_rdi0":0[fmt:SGBRG10_1X10/2592x1940]'
+     v4l2-ctl -d /dev/video3 -v width=2592,height=1940,pixelformat=pGAA
+     v4l2-ctl -d /dev/video3 --stream-mmap=4 --stream-count=3 --stream-to=/tmp/s5k3t2.raw
+     ```
+     Captured **3/3 frames** (`18,903,360` bytes, `sample64k_nonzero=65366/65536`, `min=0, max=255`); `test_pattern=2` color bars captured **2/2 frames** (`12,602,240` bytes, `head16=ffffffffffffffffffffffffffffffff`).
+   - **`imx686 4-001a` (`/dev/v4l-subdev19`, `csiphy1` 3-trio C-PHY)**:
+     ```sh
+     media-ctl -d /dev/media0 -r
+     media-ctl -d /dev/media0 -l '"msm_csiphy1":1->"msm_csid2":0[1],"msm_csid2":1->"msm_vfe2_rdi0":0[1]'
+     media-ctl -d /dev/media0 -V '"imx686 4-001a":0[fmt:SBGGR10_1X10/4624x3472],"msm_csiphy1":0[fmt:SBGGR10_1X10/4624x3472],"msm_csid2":0[fmt:SBGGR10_1X10/4624x3472],"msm_vfe2_rdi0":0[fmt:SBGGR10_1X10/4624x3472]'
+     v4l2-ctl -d /dev/video6 -v width=4624,height=3472,pixelformat=pBAA
+     v4l2-ctl -d /dev/video6 --stream-mmap=4 --stream-count=3 --stream-to=/tmp/imx686.raw
+     ```
+     Captured **3/3 frames** (`60,329,472` bytes, `sample64k_nonzero=64163/65536`, `min=0, max=255`); `test_pattern=2` color bars captured **2/2 frames** (`40,219,648` bytes, `head16=ffffffffffffffffffffffffffffffff`).
+
+3. **Gates & Final Artifact SHA-256**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 39 patches applied`, `dtbs_check: 16 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `6c359d8c60873d5219917a063c9fef8b0141a275a8ce7a24c36d103eb5c9fd30`
+   - `build/out/initrd.cpio.gz`: `ca9061c651d7174abc8dd6b6e085615bdaddad74bd35ff1d404419285496b429`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `11dd78601f1e3c53aab6567e022360fd859b064b4852b75574dcf8d5c0e4c9a8`
+   - `build/out/boot-linux.img`: `89741f00ba45a016a9abb3518ac39589d8e540b50c4ebb76171db4095cf33821`
+   - `build/out/payload-linux.bin`: `8c336c1d1a4847b02422ae00c51d0bc597f0c6a07a0aa991360e36779bb2d18e`
+
+### 31. Camera Portrait Orientation + Touch SPI & `uclamp`/`HZ=1000` Smoothness — VERIFIED on live hardware (`#220`, 2026-11-18)
+
+Verified via RAM boot `#220` (`<lan-ip>`, cmdline
+`console=tty0 loglevel=7 selinux=0 picasso_pinmux.mode=write rdinit=/init auto_reboot=0 systemd.show_status=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10`):
+
+1. **Camera Portrait Orientation (`0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch`)**:
+   - **Root cause**: `ov8856.c`, `imx686.c`, and `s5k3t2.c` already call `v4l2_fwnode_device_parse()` + `v4l2_ctrl_new_fwnode_properties()`, which only register `V4L2_CID_CAMERA_SENSOR_ROTATION` (`0x009a0923`) when DT `rotation` is populated; without it, `/usr/bin/braun` logged `no rotation: none assumed` and exposed landscape buffers.
+   - **Fix**: Added `rotation = <270>;` on `camera@56` (`s5k3t2`), `rotation = <90>;` on `camera@1a` (`imx686`), and `rotation = <90>;` on `camera@10` (`ov8856`) in `arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts` (matching downstream `picasso-sm7250-camera-sensor-mtp.dtsi` `sensor-position-roll`).
+   - **Live verification (`#220`)**:
+     - `v4l2-ctl -d /dev/v4l-subdev17..19 --list-ctrls` exposes `camera_sensor_rotation`: `90` (`ov8856`), `270` (`s5k3t2`), `90` (`imx686`).
+     - `journalctl -u braun` shows zero `no rotation` warnings; D-Bus `org.braun.Camera1.Cameras` reports upright portrait dimensions (`ov8856`: `2464x3280`, `s5k3t2`: `1940x2592`, `imx686`: `3472x4624`).
+     - Live captures via `/usr/lib/denial-apps/camera` produced upright portrait JPEGs verified visually: back `ov8856` (`2464x3280`) and front `s5k3t2` (`1940x2592`).
+
+2. **Touch SPI / Mutex Contention & `deniald` `uclamp`/`HZ=1000` Smoothness (`0002*`, `0011*`, `configs/linux/picasso.config`)**:
+   - **Touch driver (`0011-input-picasso-nvt-sram-firmware.patch`, `0002*`)**:
+     - Increased `&spi1 -> touchscreen@0` `spi-max-frequency` from `<5000000>` to `<9600000>` (`dmesg`: `mode 0, 9600000 Hz`, `spi0.0/statistics/messages = 74475`, `errors = 0`).
+     - Added `cur_page` / `page_valid` SPI page caching in `nvt_set_page()` (invalidated before/after `reset_gpio` toggle in `nvt_eng_reset()`, `nvt_bootloader_reset()`, `nvt_suspend()`, `nvt_resume()`, and SPI errors), eliminating redundant 3-byte `spi_sync` page writes per touch IRQ.
+     - Increased `NVT_POLL_MS_IRQ` from `100` to `2000` and skipped `nvt_fetch_report()` and active-touch health reads (`!ts->slots`) once `ts->irq_count > 0`, eliminating `kworker` vs `nvt_irq_thread` `ts->lock` mutex stalls.
+   - **Kernel scheduling (`configs/linux/picasso.config`)**:
+     - Enabled `CONFIG_UCLAMP_TASK=y`, `CONFIG_UCLAMP_BUCKETS_COUNT=20`, `CONFIG_UCLAMP_TASK_GROUP=y`, and `CONFIG_HZ_1000=y` (`CONFIG_HZ=1000`).
+     - Verified in `/proc/config.gz`; `deniald` logs `applied UI CPU capacity request ... minimum=512` (`flutter-display`, `flutter-raster`, `compositor`) and `deniald::cpu_scheduling::hints: semantic CPU hints active little=0,1,2,3,4,5 little_capacity=453 boost=454 focus=256 background_max=453 hold_ms=1500 pin=true`.
+   - **Live frame-rate & GPU/CPU profiling (`#220`)**:
+     - Display panel runs at `120.5 Hz` (`dsi_isr`); synthetic `event3` scroll on `settings` (`/usr/lib/denial-apps/settings`) rose from `28.4 fps` on `#219` (trapped on LITTLE `cpu2`) to `39.7–40.7 fps` drag / `40.0 fps` fling on `#220` (`tid` placed on Prime `cpu7`, `1401.6 MHz`, GPU `3d00000.gpu` at `625 MHz`).
+     - `VkQueryPool` + `DRM_IOCTL_MSM_WAIT_FENCE` profiling isolated the remaining ~40 fps ceiling in `settings` to `gpui_wgpu` GPU shader workload (`gpu_exec = 14.2–15.4 ms` @ `625 MHz`, `35.3–36.0 ms` @ `275 MHz`; `RP0` `988x2116` takes `12.2 ms` across `fs_quad`/`fs_shadow`, scaling `2.42x` with GPU clock; `MESA_VK_WSI_PRESENT_MODE=mailbox`/`immediate` = `40.3`/`40.4 fps`; pinning `CPU 6,7` at max clock = `39.0 fps` drag / `41.2 fps` fling).
+
+3. **Gates & Final Artifact SHA-256**:
+   - `./tools/policy-scan.sh`: `OK (22 code files, 42 path files)`.
+   - `./build.sh check`: `[OK] 39 patches applied`, `dtbs_check: 16 schema diagnostics from the vendor series`.
+   - `build/out/Image`: `368c4c31f7c402731b76c99349be951dd98d73835d7c4a120d21d8bf0d888d83`
+   - `build/out/initrd.cpio.gz`: `ca9061c651d7174abc8dd6b6e085615bdaddad74bd35ff1d404419285496b429`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `fbbe0f50b2934cc103ffbd32cb29a06212a55cc597d16e18bc38faccbd952a62`
+   - `build/out/boot-linux.img`: `2bc0821be67dfdae241b1e7bca2b1913f5cb7a0e059490e2e8b4205d1af67151`
+   - `build/out/payload-linux.bin`: `4b40548a6ae515d3c3a25e13294f1c1bd8b603a21db30239cddfba00e33ea6dc`

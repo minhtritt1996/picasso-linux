@@ -9,10 +9,10 @@ index 798643be3..8ccb9f5ab 100644
 +obj-y += picasso-pinmux.o
 diff --git a/drivers/soc/qcom/picasso-pinmux.c b/drivers/soc/qcom/picasso-pinmux.c
 new file mode 100644
-index 000000000..2211f293f
+index 000000000..bb2777d59
 --- /dev/null
 +++ b/drivers/soc/qcom/picasso-pinmux.c
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,183 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Early pinmux for the Xiaomi Redmi K30 5G (picasso, SM7250).
@@ -79,6 +79,8 @@ index 000000000..2211f293f
 +	}
 +	v &= ~(CFG_MUX_MASK | CFG_DRV_MASK | CFG_OUTPUT | 0x3);
 +	v |= (func << 2) | (drv << 6) | (bias & 0x3);
++	if (v & BIT(11))
++		v |= BIT(12);
 +	if (output)
 +		v |= CFG_OUTPUT;
 +	writel(v, ctl);

@@ -1,0 +1,22 @@
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+index 55678a30c..fa426075d 100644
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -584,6 +584,7 @@ static int qcom_swrm_get_alert_slave_dev_num(struct qcom_swrm_ctrl *ctrl)
+ 	int dev_num;
+ 
+ 	ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &val);
++	ctrl->slave_status = val;
+ 
+ 	for (dev_num = 1; dev_num <= SDW_MAX_DEVICES; dev_num++) {
+ 		status = (val >> (dev_num * SWRM_MCP_SLV_STATUS_SZ));
+@@ -739,6 +740,9 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
+ 					    "no slave alert found.spurious interrupt\n");
+ 				} else {
+ 					sdw_handle_slave_status(&ctrl->bus, ctrl->status);
++					qcom_swrm_get_device_status(ctrl);
++					if (ctrl->status[devnum] == SDW_SLAVE_ATTACHED)
++						sdw_handle_slave_status(&ctrl->bus, ctrl->status);
+ 				}
+ 
+ 				break;

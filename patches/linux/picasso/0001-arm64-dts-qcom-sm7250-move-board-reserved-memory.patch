@@ -153,7 +153,7 @@ index 0cdad894d..e1a85c818 100644
  		 * Downstream: 0xcbe00000 + 0x400000 including a 0x1000
  		 * OnePlus-only devinfo zone at the end. Mainline has no such
 diff --git a/arch/arm64/boot/dts/qcom/sm7250.dtsi b/arch/arm64/boot/dts/qcom/sm7250.dtsi
-index e2279ea4a..5dd11cd1e 100644
+index e2279ea4a..29857d489 100644
 --- a/arch/arm64/boot/dts/qcom/sm7250.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm7250.dtsi
 @@ -433,151 +433,6 @@ cluster_pd: power-domain-cpu-cluster0 {
@@ -350,3 +350,14 @@ index e2279ea4a..5dd11cd1e 100644
  				#address-cells = <1>;
  				#size-cells = <0>;
  				interconnects = <&qup_virt MASTER_QUP_CORE_1 QCOM_ICC_TAG_ALWAYS
+@@ -1132,8 +993,8 @@ camss: isp@acb3000 {
+ 			      <0x0 0x0ace2000 0x0 0x2000>,
+ 			      <0x0 0x0ace4000 0x0 0x2000>,
+ 			      <0x0 0x0ace6000 0x0 0x2000>,
+-			      <0x0 0x0acaf000 0x0 0x5200>,
+-			      <0x0 0x0acb6000 0x0 0x5200>,
++			      <0x0 0x0acaf000 0x0 0x4000>,
++			      <0x0 0x0acb6000 0x0 0x4000>,
+ 			      <0x0 0x0acc4000 0x0 0x4000>;
+ 			reg-names = "csid0",
+ 				    "csid1",

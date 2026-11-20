@@ -1091,6 +1091,37 @@ static int write_text(const char *path, const char *text)
 	return n == (ssize_t)len ? 0 : -1;
 }
 
+static int copy_file_mode(const char *src, const char *dst, mode_t mode)
+{
+	char buf[8192];
+	int in, out;
+	ssize_t n;
+
+	in = open(src, O_RDONLY);
+	if (in < 0)
+		return -1;
+	out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, mode);
+	if (out < 0) {
+		close(in);
+		return -1;
+	}
+	while ((n = read(in, buf, sizeof(buf))) > 0) {
+		ssize_t off = 0;
+		while (off < n) {
+			ssize_t w = write(out, buf + off, (size_t)(n - off));
+			if (w < 0) {
+				close(in);
+				close(out);
+				return -1;
+			}
+			off += w;
+		}
+	}
+	close(in);
+	close(out);
+	return n < 0 ? -1 : 0;
+}
+
 /*
  * Device policy that must not live in the image: the system is upgraded as
  * shipped, so per-phone decisions go into /run drop-ins, which systemd reads and
@@ -1274,6 +1305,18 @@ static void write_device_dropins(const char *newroot)
 			"        audio.channels = 2\n"
 			"      }\n"
 			"    }\n"
+			"  },\n"
+			"  {\n"
+			"    matches = [\n"
+			"      { node.name = \"~alsa_input.*\" }\n"
+			"    ]\n"
+			"    actions = {\n"
+			"      update-props = {\n"
+			"        audio.format = \"S16LE\"\n"
+			"        audio.rate = 48000\n"
+			"        audio.channels = 1\n"
+			"      }\n"
+			"    }\n"
 			"  }\n"
 			"]\n";
 		static const char ucm_hifi[] =
@@ -1281,9 +1324,19 @@ static void write_device_dropins(const char *newroot)
 			"\tEnableSequence [\n"
 			"\t\tcset \"name='SEC_MI2S_RX Audio Mixer MultiMedia1' 1\"\n"
 			"\t\tcset \"name='Speaker Playback Volume' 7\"\n"
+			"\t\tcset \"name='MultiMedia2 Mixer TX_CODEC_DMA_TX_3' 1\"\n"
+			"\t\tcset \"name='TX_AIF1_CAP Mixer DEC0' 1\"\n"
+			"\t\tcset \"name='TX DEC0 MUX' 'SWR_MIC'\"\n"
+			"\t\tcset \"name='TX SMIC MUX0' 'ADC0'\"\n"
+			"\t\tcset \"name='ADC1_MIXER Switch' 1\"\n"
+			"\t\tcset \"name='ADC1 Switch' 1\"\n"
+			"\t\tcset \"name='ADC1 Volume' 18\"\n"
 			"\t]\n"
 			"\tDisableSequence [\n"
 			"\t\tcset \"name='SEC_MI2S_RX Audio Mixer MultiMedia1' 0\"\n"
+			"\t\tcset \"name='ADC1_MIXER Switch' 0\"\n"
+			"\t\tcset \"name='TX_AIF1_CAP Mixer DEC0' 0\"\n"
+			"\t\tcset \"name='MultiMedia2 Mixer TX_CODEC_DMA_TX_3' 0\"\n"
 			"\t]\n"
 			"\tValue {\n"
 			"\t\tTQ \"HiFi\"\n"
@@ -1295,6 +1348,28 @@ static void write_device_dropins(const char *newroot)
 			"\t\tPlaybackPriority 100\n"
 			"\t\tPlaybackPCM \"hw:${CardId},0\"\n"
 			"\t\tPlaybackMixerElem \"Speaker\"\n"
+			"\t}\n"
+			"}\n"
+			"SectionDevice.\"Mic\" {\n"
+			"\tComment \"Internal Microphone\"\n"
+			"\tEnableSequence [\n"
+			"\t\tcset \"name='MultiMedia2 Mixer TX_CODEC_DMA_TX_3' 1\"\n"
+			"\t\tcset \"name='TX_AIF1_CAP Mixer DEC0' 1\"\n"
+			"\t\tcset \"name='TX DEC0 MUX' 'SWR_MIC'\"\n"
+			"\t\tcset \"name='TX SMIC MUX0' 'ADC0'\"\n"
+			"\t\tcset \"name='ADC1_MIXER Switch' 1\"\n"
+			"\t\tcset \"name='ADC1 Switch' 1\"\n"
+			"\t\tcset \"name='ADC1 Volume' 18\"\n"
+			"\t]\n"
+			"\tDisableSequence [\n"
+			"\t\tcset \"name='ADC1_MIXER Switch' 0\"\n"
+			"\t\tcset \"name='TX_AIF1_CAP Mixer DEC0' 0\"\n"
+			"\t\tcset \"name='MultiMedia2 Mixer TX_CODEC_DMA_TX_3' 0\"\n"
+			"\t]\n"
+			"\tValue {\n"
+			"\t\tCapturePriority 100\n"
+			"\t\tCapturePCM \"hw:${CardId},1\"\n"
+			"\t\tCaptureChannels 1\n"
 			"\t}\n"
 			"}\n";
 		static const char ucm_top[] =
@@ -1396,6 +1471,37 @@ static void write_device_dropins(const char *newroot)
 				klog("root: sshd ListenAddress 0.0.0.0 bound\n");
 			else
 				klog("root: sshd bind mount failed: %s\n", strerror(errno));
+		}
+	}
+
+	/* Persistent QMI LOC GNSS daemon in /run so the QRTR client stays alive */
+	if (access("/bin/picasso-gnss", X_OK) == 0) {
+		char p[256], link[256];
+		static const char gnss_svc[] =
+			"[Unit]\n"
+			"Description=Picasso persistent QMI LOC GNSS daemon\n"
+			"After=systemd-journald.service\n"
+			"[Service]\n"
+			"Type=simple\n"
+			"ExecStart=/run/picasso-gnss\n"
+			"Restart=on-failure\n"
+			"RestartSec=3\n"
+			"[Install]\n"
+			"WantedBy=multi-user.target\n";
+
+		snprintf(p, sizeof(p), "%s/run/picasso-gnss", newroot);
+		if (copy_file_mode("/bin/picasso-gnss", p, 0755) == 0) {
+			snprintf(p, sizeof(p), "%s/run/systemd/system/picasso-gnss.service", newroot);
+			(void)!write_text(p, gnss_svc);
+			snprintf(p, sizeof(p), "%s/run/systemd/system/multi-user.target.wants", newroot);
+			mkdir_parents(p);
+			snprintf(link, sizeof(link), "%s/run/systemd/system/multi-user.target.wants/picasso-gnss.service", newroot);
+			if (symlink("/run/systemd/system/picasso-gnss.service", link) && errno != EEXIST)
+				klog("root: picasso-gnss wants link failed: %s\n", strerror(errno));
+			else
+				klog("root: picasso-gnss.service enabled\n");
+		} else {
+			klog("root: copy picasso-gnss failed: %s\n", strerror(errno));
 		}
 	}
 }

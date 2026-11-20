@@ -1,0 +1,21 @@
+diff --git a/drivers/pinctrl/qcom/pinctrl-sm7250.c b/drivers/pinctrl/qcom/pinctrl-sm7250.c
+index c1711ec6a..3903de9ef 100644
+--- a/drivers/pinctrl/qcom/pinctrl-sm7250.c
++++ b/drivers/pinctrl/qcom/pinctrl-sm7250.c
+@@ -50,6 +50,8 @@ enum {
+ 		.mux_bit = 2,				\
+ 		.pull_bit = 0,				\
+ 		.drv_bit = 6,				\
++		.egpio_enable = 12,			\
++		.egpio_present = 11,			\
+ 		.oe_bit = 9,				\
+ 		.in_bit = 0,				\
+ 		.out_bit = 1,				\
+@@ -1693,6 +1695,7 @@ static const struct msm_pinctrl_soc_data sm7250_tlmm = {
+ 	.wakeirq_map = sm7250_pdc_map,
+ 	.nwakeirq_map = ARRAY_SIZE(sm7250_pdc_map),
+ 	.wakeirq_dual_edge_errata = true,
++	.egpio_func = 10,
+ };
+ 
+ static int sm7250_tlmm_probe(struct platform_device *pdev)

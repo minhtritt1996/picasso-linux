@@ -64,6 +64,7 @@ fi
 # prebuilt static helpers (rmtfs, pd-mapper): see tools/bin/README
 mkdir -p "$TMP/bin" "$TMP/run/rmtfs"
 "$CC" -static -Os -s -o "$TMP/bin/tone" "$ROOT/tools/tone/tone.c"
+"$CC" -static -Os -s -Wall -Wextra -Werror -o "$TMP/bin/picasso-gnss" "$ROOT/tools/gnss/picasso-gnss.c"
 if compgen -G "$ROOT/tools/bin/*" >/dev/null; then
 	cp "$ROOT"/tools/bin/* "$TMP/bin/"
 	chmod 755 "$TMP"/bin/*

@@ -45,7 +45,7 @@ toàn bộ phần cứng trên máy này). Mỗi giá trị đưa vào DTS mainl
 | Hạng mục | Downstream | Giá trị |
 |---|---|---|
 | bus | `lito-qupv3.dtsi:495` | `spi@984000` (SE7) |
-| node | `picasso-sm7250.dtsi:133+` | `novatek,NVT-ts-spi`, 5 MHz |
+| node | `picasso-sm7250.dtsi:23,133-137` | `novatek,NVT-ts-spi`, `9.6 MHz` (`spi-max-frequency = <9600000>`, per `:137` `//4800000,9600000,15000000,19200000` & `touch_spi@0` `10 MHz` at `:23`) |
 | reset / IRQ | `picasso-sm7250.dtsi:138-140` | `tlmm 4` / `tlmm 5` (flag `0x2001`) / `pm8150l_gpios 3` |
 | firmware | `picasso-sm7250.dtsi:152-165` | `novatek_nt36672c_g7a_fw0{1,2,3}.bin` theo vendor/glass |
 
@@ -100,8 +100,9 @@ These are controller SRAM/register accesses, with no persistent flash program.
 | IRQ | `:330,334-336`; `nq-nci.c:1606` | tlmm 34, vendor requests level-high |
 | control pads | `:331-333` | `qcom,nq-ven` tlmm 12 (active high), `qcom,nq-firm` tlmm 35, `qcom,nq-clkreq` tlmm 31 |
 | pads tile | `lito-pinctrl.dtsi:1159-1260`, `pinctrl-lito.c` | SDA/SCL gpio42/43 (qup00, EAST); VEN/CLKREQ/IRQ/FIRM EAST |
+| TLMM 3-tile | `sm7250-oneplus-avicii.dts:488` (`sm7250.dtsi` `&tlmm`) | `&tlmm` maps all 3 tiles (`south`/`west`/`east`) with `gpio-reserved-ranges = <0 4>, <59 4>` (TZ-owned SE1 `gpio0-3` + SE6/QUP10 `gpio59-62`), enabling `tlmm 34` EAST IRQ (PDC 53) |
 | regulators / clock / firmware | — | absent in downstream (always-on, ROM NCI firmware) |
-| mainline driver | `drivers/nfc/nxp-nci/i2c.c` | `nxp,nxp-nci-i2c`, needs `enable-gpios` + `interrupts` |
+| mainline driver | `drivers/nfc/nxp-nci/i2c.c` | `nxp,nxp-nci-i2c`, needs `enable-gpios` + `interrupts`; `0018*` keeps IRQ disabled in `NXP_NCI_MODE_COLD` (`IRQ_NOAUTOEN`) so `gpio 34` pull-up does not storm at `VEN=0` |
 | pinmux workaround | `drivers/soc/qcom/picasso-pinmux.c` | mux 42/43 (qup00), VEN high, FIRM low, CLKREQ/IRQ pulled-up inputs |
 
 ## Audio capture (WCD9385 + Bolero TX/DMIC, M4)
@@ -120,22 +121,25 @@ These are controller SRAM/register accesses, with no persistent flash program.
 | SWR port maps | `lito-audio-overlay.dtsi:49-55` | PWM_OUT1/ADC1-4/DMIC0-7 → integers (reused verbatim) |
 | LPI pinctrl | `lito-lpi.dtsi:1-29`, `:1351-1545` | `lpi_pinctrl@33c0000`, slew `0x355a000`; TX clk gpio0 data1/2 gpio1/2; RX clk gpio3 data gpio4/5 |
 | DMIC pads | vendor `cdc-dmic23/45` | gpio8/9 (dmic2), gpio12/13 (dmic3), drive 8 mA |
-| card | mainline `sm8250.c` + `q6asm-dai` | MM2 = capture FE (`Q6ASM_DAI_TX`), BE `TX_CODEC_DMA_TX_3` |
+| card | mainline `sm8250.c` + `q6asm-dai` | MM2 = capture FE (`Q6ASM_DAI_TX`), BE `TX_CODEC_DMA_TX_3`; `0019*` preserves `active_channels_mask` in `q6afe_cdc_dma_port_prepare`; `0020*` resyncs `sdw:3:0` `Alert`->`Attached`; `tools/init.c` UCM2 `Picasso-HiFi.conf` exposes `SectionDevice."Mic"` (`AMIC1`/`ADC1` on `DEC0`) |
 
-## Camera (M4, stage 1/2)
+## Camera (M4, stage 1–3)
 
 | Hạng mục | Downstream | Giá trị |
 |---|---|---|
-| CCI | mainline `sm7250.dtsi` `cci@ac4a000`/`ac4b000` (disabled by default) | enable both; adapters appear as `Qualcomm-CCI` |
-| sensors | `picasso-sm7250-camera-sensor-mtp.dtsi` | IMX686 64 MP main, OV8856 8 MP UW, S5K3T2 20 MP front, S5K5E9YX04 5 MP macro, GC02M1 ×2 depth |
-| mainline sensor drivers | `build/linux/drivers/media/i2c/` | only OV8856 present; IMX686/S5K3T2/S5K5E9/GC02M1 need drivers |
-| PM8008 | `picasso-sm7250.dtsi:977` | instantiated on charger bus `0x98c000` addr 0x08; **not** in the camera rails |
-| rails | `lito-regulators.dtsi:55,414,554,775` | VIO = S5A, VDIG = S8C, VANA = BOB, VAF = L16A; enable pads on EAST/WEST tiles |
-| camcc | mainline `sm7250.dtsi:1079` | already enabled; provides TITAN_TOP_GDSC |
+| CCI | mainline `sm7250.dtsi` `cci@ac4a000`/`ac4b000` (disabled by default) | enable both; `i2c-3` (`cci0_i2c0`), `i2c-4` (`cci0_i2c1`), `i2c-5` (`cci1_i2c0`) |
+| sensors (live CCI IDs) | `picasso-sm7250-camera-sensor-mtp.dtsi` + `com.qti.sensormodule.picasso_*.bin` | `s5k3t2` (`i2c-3` `0x56`, `0x3142`, MCLK0 `gpio13`, rst `gpio32`, CSIPHY2 4-lane D-PHY), rear `gc02m1` (`i2c-3` `0x37`, `0x02e0`, MCLK3 `gpio16`, rst `gpio21`, CSIPHY0 1-lane), `imx686` (`i2c-4` `0x1a`, `0x0686`, MCLK1 `gpio14`, rst `gpio29`, CSIPHY1 3-trio C-PHY), front `gc02m1` (`i2c-4` `0x10`, `0x02e0`, MCLK2 `gpio15`, rst `gpio33`, CSIPHY3 1-lane), `ov8856` (`i2c-5` `0x10`, `0x00885a`, MCLK2 `gpio15` 6 mA @ 19.2 MHz, rst `gpio30`, CSIPHY0 2-lane D-PHY), `s5k5e9yx04` (`i2c-5` `0x2d`, `0x559b`, MCLK4 `gpio25`, rst `gpio23`, CSIPHY3 2-lane D-PHY) |
+| EEPROMs / VCMs | live `i2cdetect` on CCI | `i2c-3`: `0x50` (front EEPROM); `i2c-4`: `0x0c` (`dw9800`), `0x51` (wide EEPROM); `i2c-5`: `0x0c` (`dw9714v`), `0x51` (macro EEPROM), `0x52` (Ofilm UW EEPROM) |
+| mainline sensor drivers | `build/linux/drivers/media/i2c/` | `ov8856` (`5-0010`, `/dev/v4l-subdev17`, `SGRBG10_1X10/3280x2464`), `s5k3t2` (`3-0056`, `/dev/v4l-subdev18`, `SGBRG10_1X10/2592x1940` + `5184x3880`, `0024*`), `imx686` (`4-001a`, `/dev/v4l-subdev19`, `SBGGR10_1X10/4624x3472`, `0024*`); `s5k5e9`/`gc02m1` verified over CCI `i2ctransfer` |
+| PM8008 | `picasso-sm7250.dtsi:977` | absent on hardware (`i2cdetect -y -r 1` sees only `0x66` bq25970); not in camera power path |
+| rails & eGPIO | `lito-regulators.dtsi:55,414,554,775`, `pinctrl-lito.c:52` | VIO=`S5A` (`gpio68`), VDIG=`S8C` (`gpio45` wide, `gpio126` UW, `gpio125` front, `pm8150l_gpios 12` macro), VANA=`BOB` (`gpio127` wide, `gpio122` UW, `gpio125` front, `gpio56` macro), VAF=`L16A`. `gpio115..145` carry `egpio_present=BIT(11)` and need `egpio_enable=BIT(12)` (`0021*` + `0007*`). Paired `regulator-fixed` nodes sharing `gpio125`/`gpio127` require `CONFIG_GPIO_SHARED_PROXY=y` |
+| camcc | `camcc-lito.c:2366`, `sm7250.dtsi:1090` | `TITAN_TOP_GDSC` required before gating `cam_cc_mclk0..4_clk`; `cam_cc_pll2_config` updated to SM7250 v2.0 (`soc_id=400`, `revision=2.0`) Zonda values (`0022*`) |
+| camss | `lito-camera.dtsi:552-608`, `sm7250.dtsi:987`, `cam_csiphy_1_2_hwreg.h` | `vfe0` (`0xacaf000`) & `vfe1` (`0xacb6000`) reg sizes trimmed `0x5200` → `0x4000` (`0001*`); `MEDIA_BUS_TYPE_CSI2_CPHY` (`bus-type = <1>`, `lane_regs_sm7250_3ph` + `CSI2_RX_CFG0_PHY_TYPE_SEL`) added in `0023*`; `&camss` enabled with `ov8856` (`port@0`), `imx686` (`port@1`, C-PHY), and `s5k3t2` (`port@2`, D-PHY) (`0002*`) |
+| sensor rotation | `picasso-sm7250-camera-sensor-mtp.dtsi:231,296,378` | `imx686` (`rotation = <90>`, `sensor-position-roll = <90>`), `ov8856` (`rotation = <90>`, `sensor-position-roll = <90>`), `s5k3t2` (`rotation = <270>`, `sensor-position-roll = <270>`); exposes `V4L2_CID_CAMERA_SENSOR_ROTATION` for `braun` portrait correction (`0002*`) |
 
 ## GNSS / hotspot
 
 | Hạng mục | Downstream | Giá trị |
 |---|---|---|
-| GNSS | none in vendor DTS; `image/modemr.jsn` `{"provider":"gps","service":"gps_service"}` | engine is a PD of the modem image; reached only via QMI LOC (service 16) |
+| GNSS | none in vendor DTS; `image/modemr.jsn` `{"provider":"gps","service":"gps_service"}` | engine is a PD of the modem image; reached only via QMI LOC (service 16) from a single persistent `AF_QIPCRTR` client (`tools/gnss/picasso-gnss.c` -> `picasso-gnss.service`) |
 | WLAN AP | `lito.dtsi:3635-3667` | WCN3990 nodes already complete in mainline; AP mode + same-channel concurrency advertised by the firmware |

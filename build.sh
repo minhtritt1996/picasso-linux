@@ -314,6 +314,102 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no async-status delta to export)"
 	fi
+	local pn="picasso/0018-nfc-nxp-nci-keep-irq-disabled-when-cold.patch"
+	echo "==> Exporting $pn"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/nfc/nxp-nci/i2c.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pn"
+		grep -qxF "$pn" "$PATCHES/series" || echo "$pn" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no nxp-nci delta to export)"
+	fi
+	local pa="picasso/0019-ASoC-q6afe-preserve-active-channels-mask.patch"
+	echo "==> Exporting $pa"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- sound/soc/qcom/qdsp6/q6afe.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pa"
+		grep -qxF "$pa" "$PATCHES/series" || echo "$pa" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no q6afe delta to export)"
+	fi
+	local ps="picasso/0020-soundwire-qcom-resync-slave-status-after-alert.patch"
+	echo "==> Exporting $ps"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/soundwire/qcom.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$ps"
+		grep -qxF "$ps" "$PATCHES/series" || echo "$ps" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no soundwire/qcom delta to export)"
+	fi
+	local pp="picasso/0021-pinctrl-sm7250-egpio-ownership.patch"
+	echo "==> Exporting $pp"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/pinctrl/qcom/pinctrl-sm7250.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pp"
+		grep -qxF "$pp" "$PATCHES/series" || echo "$pp" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no pinctrl-sm7250 delta to export)"
+	fi
+	local pc="picasso/0022-clk-qcom-camcc-sm7250-pll2-v2.patch"
+	echo "==> Exporting $pc"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/clk/qcom/camcc-sm7250.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pc"
+		grep -qxF "$pc" "$PATCHES/series" || echo "$pc" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no camcc-sm7250 delta to export)"
+	fi
+	local pcam="picasso/0023-media-qcom-camss-add-sm7250-cphy.patch"
+	echo "==> Exporting $pcam"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- \
+		Documentation/devicetree/bindings/media/qcom,sm7250-camss.yaml \
+		drivers/media/platform/qcom/camss/camss.c \
+		drivers/media/platform/qcom/camss/camss-csid.c \
+		drivers/media/platform/qcom/camss/camss-csid.h \
+		drivers/media/platform/qcom/camss/camss-csid-gen2.c \
+		drivers/media/platform/qcom/camss/camss-csiphy.c \
+		drivers/media/platform/qcom/camss/camss-csiphy.h \
+		drivers/media/platform/qcom/camss/camss-csiphy-3ph-1-0.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pcam"
+		grep -qxF "$pcam" "$PATCHES/series" || echo "$pcam" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no camss cphy delta to export)"
+	fi
+	local psens="picasso/0024-media-i2c-add-imx686-s5k3t2-drivers.patch"
+	echo "==> Exporting $psens"
+	git -C "$WS" add -N \
+		Documentation/devicetree/bindings/media/i2c/sony,imx686.yaml \
+		Documentation/devicetree/bindings/media/i2c/samsung,s5k3t2.yaml \
+		drivers/media/i2c/imx686.c \
+		drivers/media/i2c/s5k3t2.c 2>/dev/null || true
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- \
+		Documentation/devicetree/bindings/media/i2c/sony,imx686.yaml \
+		Documentation/devicetree/bindings/media/i2c/samsung,s5k3t2.yaml \
+		drivers/media/i2c/imx686.c \
+		drivers/media/i2c/s5k3t2.c \
+		drivers/media/i2c/Kconfig \
+		drivers/media/i2c/Makefile > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$psens"
+		grep -qxF "$psens" "$PATCHES/series" || echo "$psens" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no sensor driver delta to export)"
+	fi
 	local pt="picasso/0011-input-picasso-nvt-sram-firmware.patch"
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-spi.c
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-vendor.c

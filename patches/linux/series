@@ -33,3 +33,10 @@ picasso/0014-media-venus-skip-iris1-power-collapse-on-idle-timeout.patch
 picasso/0015-power-supply-qcom-pm7250b-add-qg-battery.patch
 picasso/0016-ASoC-wcd938x-guard-sdw-capture-ports.patch
 picasso/0017-async-status-diagnostics.patch
+picasso/0018-nfc-nxp-nci-keep-irq-disabled-when-cold.patch
+picasso/0019-ASoC-q6afe-preserve-active-channels-mask.patch
+picasso/0020-soundwire-qcom-resync-slave-status-after-alert.patch
+picasso/0021-pinctrl-sm7250-egpio-ownership.patch
+picasso/0022-clk-qcom-camcc-sm7250-pll2-v2.patch
+picasso/0023-media-qcom-camss-add-sm7250-cphy.patch
+picasso/0024-media-i2c-add-imx686-s5k3t2-drivers.patch
