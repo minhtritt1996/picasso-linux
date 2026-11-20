@@ -1,21 +1,31 @@
-# Read-only upstream clones and build trees
+# Read-only upstream clones, build trees and host-only leftovers
 /upstream/
 /build/
+/legacy/
+/out/
+.agents/
 
 # Tool output
 __pycache__/
 *.pyc
 *.o
+*.log
+
+# Binary artifacts and images never go to git (BootShim.bin is the one exception)
+*.img
+*.cpio.gz
+*.bin
+!uefi/BootShim.bin
 *.dtb
 *.dtbo
+*.fd
 
 # Local dtschema install used by ./build.sh check
 /.venv-dtschema/
-prebuilt/fw-gpu/
 
-# Build artifacts that must never be tracked
-/out/
-/legacy/build-out/
 # Vendor firmware is read from the phone at runtime, never committed
 prebuilt/fw-*/
-prebuilt/*.dtb
+
+# Prebuilt static helpers (rmtfs, pd-mapper, tqftpserv): see initramfs/bin/README.md
+/initramfs/bin/*
+!/initramfs/bin/README.md

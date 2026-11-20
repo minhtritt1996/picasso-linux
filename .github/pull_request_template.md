@@ -9,11 +9,11 @@
 - [ ] `patches/linux/vendor/` untouched; the new picasso patch is listed in
       `patches/linux/series`.
 - [ ] `./build.sh check` is green (series applies to a clean upstream, DTB builds).
-- [ ] `STATUS.md` records the hardware run (cmdline, artifacts, what was seen);
-      `docs/luma-port.md` updated if a done-criterion moved.
+- [ ] `docs/changelog/boot-history.md` records the hardware run (cmdline, artifacts, what was seen);
+      `docs/hardware-status.md` updated if a done-criterion moved.
 - [ ] The hardware run was RAM-boot only: `fastboot boot`, `stage`,
       `oem ramdisk`, `oem run`. No `flash`, no `erase`, no `dd` to a block device.
-- [ ] `tools/preflight.sh` is green.
+- [ ] `scripts/preflight.sh` is green.
 
 ## Verification
 

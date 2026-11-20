@@ -1,0 +1,571 @@
+diff --git a/xnuloader/loader.c b/xnuloader/loader.c
+index 422f9d3..cd2610c 100644
+--- a/xnuloader/loader.c
++++ b/xnuloader/loader.c
+@@ -9,6 +9,9 @@
+  *     and a boot_args structure behind the kernel
+  *   - exits boot services, turns the MMU off and jumps to the kernel entry
+  */
++/* stop feeding the hypervisor watchdog after this long, so a hung kernel meets it */
++#define WDT_PET_WINDOW 20
++
+ #include "efi.h"
+ #include "identity.h"         /* who Darwin shall think we are: from the iPhone's own device tree (mkidentity.py) */
+ 
+@@ -41,6 +44,18 @@ struct payload_entry { char name[16]; uint32_t size; uint32_t reserved; };
+ #define PANIC_LOG_BASE      (PAYLOAD_BASE + PAYLOAD_MAX_SIZE - 0x100000ULL)
+ #define PAYLOAD_MAX_SIZE    0x04000000ULL         /* RAM reserved for the payload in the UEFI memory map */
+ 
++/* ------------------------------------------------------------------------ */
++/* Linux (mainline arm64 EFI stub) boot from the same payload               */
++
++/* EFI configuration table the stub reads the device tree from (libstub/fdt.c: get_fdt). */
++#define DEVICE_TREE_GUID { 0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } }
++
++/* efi.h keeps these entries untyped; the ABI is fixed by the UEFI spec. */
++typedef efi_status (EFIAPI *efi_install_configuration_table_fn)(efi_guid *guid, void *table);
++typedef efi_status (EFIAPI *efi_load_image_fn)(uint8_t boot_policy, efi_handle parent, void *device_path,
++    void *source, uint64_t source_size, efi_handle *image);
++typedef efi_status (EFIAPI *efi_start_image_fn)(efi_handle image, uint64_t *exit_data_size, void *exit_data);
++
+ /* ------------------------------------------------------------------------ */
+ /* XNU structures (pexpert/pexpert/arm64/boot.h, mach-o/loader.h)           */
+ 
+@@ -401,6 +416,48 @@ flush_log(void)
+ 	write_logs(NULL, 0);
+ }
+ 
++/*
++ * Linux already mirrors its console into a 1 MiB RAM window (kernel/printk).
++ * Bring the tail into this log at start-up so a kernel that died before USB
++ * appeared is still readable with "fastboot get_staged" and in logdump.
++ */
++#define RAMLOG_PHYS	0xF3F00000ULL
++#define RAMLOG_DATA	0x1000U
++#define RAMLOG_ROOM	(0x100000U - RAMLOG_DATA)
++#define RAMLOG_MAGIC	0x474F4C52U
++
++static void
++ramlog_append(void)
++{
++	const uint32_t *hdr = (const uint32_t *)(uintptr_t)RAMLOG_PHYS;
++	const char *data = (const char *)(uintptr_t)(RAMLOG_PHYS + RAMLOG_DATA);
++	static const char title[] = "\n== previous kernel console ==\n";
++	uint32_t magic = hdr[0], pos = hdr[1], total = hdr[2];
++	uint32_t take, start, i;
++
++	if (magic != RAMLOG_MAGIC || total == 0) {
++		return;
++	}
++	take = total < RAMLOG_ROOM ? total : RAMLOG_ROOM;
++	if (take > 20000) {
++		take = 20000;
++	}
++	if (log_len + take + sizeof(title) + 2 >= sizeof(log_buf)) {
++		return;
++	}
++	if (total <= RAMLOG_ROOM) {
++		start = total - take;
++	} else {
++		start = (pos + RAMLOG_ROOM - take) % RAMLOG_ROOM;
++	}
++	memcpy(log_buf + log_len, title, sizeof(title) - 1);
++	log_len += sizeof(title) - 1;
++	for (i = 0; i < take; i++) {
++		log_buf[log_len++] = data[(start + i) % RAMLOG_ROOM];
++	}
++	log_buf[log_len] = 0;
++}
++
+ /* ------------------------------------------------------------------------ */
+ /* Apple device tree writer                                                 */
+ /*                                                                          */
+@@ -588,6 +645,19 @@ static const struct platform platform_redwood = {
+ 	.small_cores = 0x0f,
+ };
+ 
++/*
++ * picasso: Redmi K30 5G, SM7250 (lito). Same GIC as redwood; the cores are 6 Cortex-A55
++ * (0-5) and 2 Cortex-A76 (6-7), numbered in MPIDR's second affinity field. Linux does not
++ * use this (its own DTB describes the SoC); it is here because the display branch below
++ * needs a platform for the phone's framebuffer. Kept in sync with the HakiOS XNU port.
++ */
++static const struct platform platform_picasso = {
++	.name = "picasso", .io_base = 0x00400000, .io_size = 0x3FC00000,
++	.gic_dist = 0x17A00000, .gic_redist = 0x17A60000, .uart = 0, .log_other_cpu = 1,
++	.cores = 8, .core_shift = 8,
++	.small_cores = 0x3f,
++};
++
+ /* ------------------------------------------------------------------------ */
+ 
+ static void
+@@ -971,6 +1041,8 @@ static uint64_t sound_len;
+ #define OTHER_CPU_HUNG          1001    /* ... the kernel stopped giving signs of life */
+ #define START_SECONDS           5
+ #define SILENCE_SECONDS         50
++/* with no kernel mailbox: return to the loader after this long, so a hang never needs a human */
++#define RETURN_DEADLINE_SECONDS 90
+ #define NOTE_SECONDS            24      /* how long the kernel's progress is written down as it happens */
+ 
+ static void wdt_pet(void);
+@@ -2393,7 +2465,7 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
+ 		 * the kernel does it too, but whether that counts from another core is not known.
+ 		 * After that a kernel that neither returns nor hangs visibly meets the watchdog.
+ 		 */
+-		if (wdt_armed && seconds_since(last_pet) >= 5 && seconds_since(started) < budget + 60) {
++		if (wdt_armed && seconds_since(last_pet) >= 5 && seconds_since(started) < WDT_PET_WINDOW) {
+ 			wdt_pet();
+ 			last_pet = READ_SYSREG(CNTVCT_EL0);
+ 		}
+@@ -2403,6 +2475,17 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
+ 			charger_poll();
+ 			last_battery = READ_SYSREG(CNTVCT_EL0);
+ 		}
++		/*
++		 * A kernel that never returns and shows no mailbox (mainline Linux has no
++		 * XNULIVE struct) must not leave the board hung: give it a hard deadline and
++		 * come back to the loader without touching the unknown mailbox.
++		 */
++		if (live == NULL && seconds_since(started) >= RETURN_DEADLINE_SECONDS) {
++			print("deadline: %d s without the kernel returning (arrived=%d)\n",
++			    (uint64_t)RETURN_DEADLINE_SECONDS, (uint64_t)arrived);
++			status = OTHER_CPU_HUNG;
++			break;
++		}
+ 		if (arrived && live != NULL) {
+ 			if (live->heartbeat != last_beat) {
+ 				last_beat = live->heartbeat;
+@@ -2503,7 +2586,7 @@ wdt_arm(void)
+ {
+ 	uint64_t ctl = 0, since = 0;
+ 
+-	if (PLAT != &platform_redwood) {
++	if (PLAT != &platform_redwood && PLAT != &platform_picasso) {
+ 		return; /* SMC is not routed anywhere useful on QEMU virt */
+ 	}
+ 	uint64_t st = smc_call(VIRT_WDT_STATUS, 0, 0, &ctl, &since);
+@@ -2567,6 +2650,13 @@ struct payload_info {
+ 	uint32_t resident_size;
+ 	const char *kernel_version;     /* kernel.ver: the version of the kernel in this payload (tools/kernel-version.py) */
+ 	int usb_mode;
++	/* mainline Linux: an "Image" entry makes the loader boot Linux instead of XNU */
++	const uint8_t *linux_image;
++	uint32_t linux_image_size;
++	const uint8_t *linux_initrd;
++	uint32_t linux_initrd_size;
++	const uint8_t *linux_dtb;
++	uint32_t linux_dtb_size;
+ };
+ 
+ static uint64_t
+@@ -2646,6 +2736,15 @@ parse_payload(struct payload_info *pi, int verbose)
+ 			pi->checkpoint = parse_number(text, 10);  /* where the kernel should stop and come back */
+ 		} else if (str_eq(e->name, "usb")) {
+ 			pi->usb_mode = 1;                         /* stay in the loader and take commands over USB */
++		} else if (str_eq(e->name, "Image")) {
++			pi->linux_image = p + sizeof(*e);         /* mainline arm64 Image (PE32+ EFI stub) */
++			pi->linux_image_size = e->size;
++		} else if (str_eq(e->name, "initrd")) {
++			pi->linux_initrd = p + sizeof(*e);        /* cpio.gz ramdisk, handed over via /chosen */
++			pi->linux_initrd_size = e->size;
++		} else if (str_eq(e->name, "dtb")) {
++			pi->linux_dtb = p + sizeof(*e);           /* mainline DTB, installed as a config table */
++			pi->linux_dtb_size = e->size;
+ 		}
+ 		p += sizeof(*e) + ((e->size + 15) & ~15u);
+ 	}
+@@ -2803,6 +2902,21 @@ choose_window(const struct payload_info *pi)
+ 	if (best_size > MAX_MEM_SIZE) {
+ 		best_size = MAX_MEM_SIZE;
+ 	}
++	/*
++	 * A Linux payload does not need a 5 GiB XNU window: it only needs room
++	 * for the resident image at win_base + RESIDENT_RD_OFFSET, and claiming
++	 * everything else starves the firmware of memory for the Image itself
++	 * (the kernel then never runs).
++	 */
++	if (pi->linux_image != NULL) {
++		/* 2 GiB: 128 MiB offset + 768 MiB reserve + ~1.1 GiB of resident
++		 * image, and the rest of RAM left to the firmware and the kernel */
++		const uint64_t linux_window = 0x80000000ULL;
++
++		if (best_size > linux_window) {
++			best_size = linux_window;
++		}
++	}
+ 	/* UEFI stays alive while the kernel runs, so the kernel must own all of its window. */
+ 	uint64_t claim = best_base;
+ 	efi_status s = BS->allocate_pages(AllocateAddress, EfiLoaderData, best_size >> 12, &claim);
+@@ -2822,6 +2936,198 @@ choose_window(const struct payload_info *pi)
+  */
+ static int starts_with(const char *s, const char *prefix);
+ 
++/*
++ * Patch /chosen/linux,initrd-start and -end in the payload's board DTB, in
++ * place: both properties must already exist with a 8-byte value (the packer
++ * writes placeholders), because growing the blob is not supported here.  They
++ * are two big-endian cells each (the root has #address-cells = 2).
++ * Returns 1 when both were written.
++ */
++static int
++patch_linux_initrd(void *fdt, uint64_t start, uint64_t end)
++{
++	uint8_t *b = fdt;
++	uint32_t p, magic, totalsize, off_struct, off_strings, version;
++	int depth = 0, in_chosen = 0, found = 0;
++
++	if (b == NULL) {
++		return 0;
++	}
++	magic = __builtin_bswap32(*(uint32_t *)(b + 0));
++	totalsize = __builtin_bswap32(*(uint32_t *)(b + 4));
++	off_struct = __builtin_bswap32(*(uint32_t *)(b + 8));
++	off_strings = __builtin_bswap32(*(uint32_t *)(b + 12));
++	version = __builtin_bswap32(*(uint32_t *)(b + 20));
++	if (magic != 0xd00dfeedu || version < 16 || totalsize > 0x1000000u ||
++	    off_struct >= totalsize || off_strings >= totalsize) {
++		print("linux: /chosen patch: not an FDT (magic %x ver %u)\n", magic, version);
++		return 0;
++	}
++
++	p = off_struct;
++	while (p + 4 <= totalsize) {
++		uint32_t tok = __builtin_bswap32(*(uint32_t *)(b + p));
++
++		p += 4;
++		if (tok == 4) {					/* NOP */
++			continue;
++		}
++		if (tok == 1) {					/* BEGIN_NODE */
++			const char *name = (const char *)(b + p);
++			uint32_t len = 0;
++
++			while (p + len < totalsize && b[p + len] != 0) {
++				len++;
++			}
++			if (!in_chosen && depth == 1 && len == 6 &&
++			    starts_with(name, "chosen")) {
++				in_chosen = 1;
++			}
++			depth++;
++			p += (len + 1 + 3) & ~3u;
++			continue;
++		}
++		if (tok == 2) {					/* END_NODE */
++			depth--;
++			if (in_chosen && depth < 2) {
++				break;
++			}
++			continue;
++		}
++		if (tok == 3) {					/* PROP */
++			uint32_t len = __builtin_bswap32(*(uint32_t *)(b + p));
++			uint32_t nameoff = __builtin_bswap32(*(uint32_t *)(b + p + 4));
++			const char *pname = (const char *)(b + off_strings + nameoff);
++			uint8_t *val = b + p + 8;
++			uint64_t v = 0;
++
++			if (p + 8 + ((len + 3) & ~3u) > totalsize) {
++				return 0;
++			}
++			if (in_chosen && depth == 2 && len == 8 &&
++			    (starts_with(pname, "linux,initrd-start") ||
++			     starts_with(pname, "linux,initrd-end"))) {
++				int is_start = starts_with(pname, "linux,initrd-start");
++
++				v = is_start ? start : end;
++				*(uint32_t *)val = __builtin_bswap32((uint32_t)(v >> 32));
++				*(uint32_t *)(val + 4) = __builtin_bswap32((uint32_t)v);
++				found |= is_start ? 1 : 2;
++			}
++			p += 8 + ((len + 3) & ~3u);
++			continue;
++		}
++		if (tok == 9) {					/* END */
++			break;
++		}
++		return 0;
++	}
++	return found == 3;
++}
++
++/*
++ * A word of RAM outside everything the loader and the kernel touch, used to
++ * find out how far boot_linux() got when the phone resets: DDR keeps its
++ * contents across a PSCI reset, the loader prints it at start-up.
++ */
++#define BREADCRUMB (*(volatile uint32_t *)0xF3FF0000ULL)
++
++/* why boot_linux() gave up: visible through "fastboot getvar result" */
++static int
++linux_bail(uint64_t code)
++{
++	set_result("linux-fail", code, 0);
++	return 0;
++}
++
++/*
++ * Boot a mainline Linux arm64 Image. The EFI stub reads the device tree from
++ * the EFI configuration table and the ramdisk from /chosen; when the payload
++ * has no initrd the two /chosen cells are filled here from the resident image
++ * the host sent with "oem ramdisk".
++ */
++static int
++boot_linux(const struct payload_info *pi)
++{
++	static efi_guid dtb_guid = DEVICE_TREE_GUID;
++	efi_handle handle;
++	efi_status s;
++
++	uint64_t initrd_pa = 0, initrd_size = 0;
++	/*
++	 * The payload window is ordinary RAM to the kernel, which relocates and
++	 * decompresses over it before the EFI stub reads the FDT; the stub then
++	 * reports "invalid header detected on uefi supplied fdt". Keep the tree in
++	 * this image's own storage and hand over the copy.
++	 */
++	static uint8_t dtb_copy[0x20000] __attribute__((aligned(4096)));
++
++	if (pi->linux_dtb == NULL || pi->linux_dtb_size < 0x30 ||
++	    pi->linux_dtb_size > sizeof(dtb_copy))
++		return linux_bail(5);
++	if (__builtin_bswap32(*(const uint32_t *)pi->linux_dtb) != 0xd00dfeedu)
++		return linux_bail(6);
++	memcpy(dtb_copy, pi->linux_dtb, pi->linux_dtb_size);
++	print("linux: dtb copied %x bytes\n", (uint64_t)pi->linux_dtb_size);
++
++	/*
++	 * Two ways to give Linux its root: the payload's own initrd (small, it
++	 * rides in the 63 MiB container), or the resident image the host sent
++	 * with "oem ramdisk", which sits at win_base + RESIDENT_RD_OFFSET and
++	 * can be gigabytes.  The latter needs the two /chosen cells rewritten
++	 * now, because where it lands is only known at run time.
++	 */
++	if (pi->linux_initrd != NULL) {
++		initrd_pa = (uint64_t)pi->linux_initrd;
++		initrd_size = (uint64_t)pi->linux_initrd_size;
++	} else if (resident_rd_size != 0 && win_base != 0) {
++		initrd_pa = win_base + RESIDENT_RD_OFFSET;
++		initrd_size = resident_rd_size;
++		print("linux: using the resident image: %x bytes @ %x\n",
++		    resident_rd_size, initrd_pa);
++		BREADCRUMB = 0x1002;            /* resident address resolved */
++		if (!patch_linux_initrd(dtb_copy, initrd_pa,
++					initrd_pa + initrd_size)) {
++			print("linux: the payload DTB has no usable /chosen/linux,initrd-*\n");
++			return linux_bail(2);
++		}
++	}
++	print("== LINUX Image %x @ %x, initrd %x @ %x, dtb %x @ %x ==\n",
++	    (uint64_t)pi->linux_image_size, (uint64_t)pi->linux_image,
++	    initrd_size, initrd_pa,
++	    (uint64_t)pi->linux_dtb_size, (uint64_t)pi->linux_dtb);
++	if (pi->linux_image == NULL || initrd_pa == 0 || pi->linux_dtb == NULL) {
++		print("linux: need an Image, a dtb and either an initrd in the payload or a resident image\n");
++		return linux_bail(1);
++	}
++	BREADCRUMB = 0x1003;                    /* dtb + initrd decided */
++	s = ((efi_install_configuration_table_fn)BS->install_configuration_table)(&dtb_guid, dtb_copy);
++	if (EFI_ERROR(s)) {
++		print("linux: install_configuration_table failed %x\n", s);
++		return linux_bail(3);
++	}
++	/*
++	 * The bootloader arms the APSS watchdog (~30 s bite) and mainline only
++	 * takes it over when qcom_wdt probes. A panic before that resets the
++	 * phone and the reason is lost, so stop it before handing over. The
++	 * kernel restarts it itself once the driver is up.
++	 */
++	*(volatile uint32_t *)(0x17C10000ULL + 0x08) = 0;   /* WDT_EN (kpss layout) */
++	print("linux: APSS watchdog stopped\n");
++	BREADCRUMB = 0x1004;                    /* about to LoadImage */
++	s = ((efi_load_image_fn)BS->load_image)(0, IMAGE, NULL, (void *)pi->linux_image, pi->linux_image_size, &handle);
++	if (EFI_ERROR(s)) {
++		print("linux: LoadImage failed %x\n", s);
++		return linux_bail(4);
++	}
++	BREADCRUMB = 0x1005;                    /* Image loaded, starting it */
++	print("linux: starting the kernel\n");
++	s = ((efi_start_image_fn)BS->start_image)(handle, NULL, NULL);
++	print("linux: the kernel returned %x\n", s);
++	BS->stall(30000000);            /* leave the message on the screen */
++	return 1;
++}
++
+ static int
+ run_kernel(int have_checkpoint, uint64_t checkpoint)
+ {
+@@ -2830,7 +3136,14 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
+ 	uint32_t desc_ver;
+ 	struct payload_info pi;
+ 
+-	if (!parse_payload(&pi, 1) || pi.kernel == NULL) {
++	if (!parse_payload(&pi, 1)) {
++		return 0;
++	}
++	BREADCRUMB = 0x1000;                    /* run_kernel entered */
++	if (pi.linux_image != NULL) {
++		return boot_linux(&pi);
++	}
++	if (pi.kernel == NULL) {
+ 		print("no kernel in payload\n");
+ 		return 0;
+ 	}
+@@ -3463,7 +3776,7 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
+ 	screen_quiet_before_run = screen_quiet;
+ 	screen_quiet = 1;               /* the screen is the kernel's now; the log still takes every line */
+ 	/* From here on the kernel feeds the watchdog (boot-arg hv_wdt_pet, see loader_return.c in XNU). */
+-	wdt_set_ms(60000);
++	wdt_set_ms(WDT_BITE_MS);
+ 
+ 	/* --- hand off (UEFI is left resident, see loader_save_ctx) ------------ */
+ 	if (loader_save_ctx() == 0) {
+@@ -3502,6 +3815,14 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
+ 				/* a kernel that hung may have left its own transfer list in the controller */
+ 				hc_take_back(status == OTHER_CPU_HUNG ? "the kernel hung" : "the kernel did not start");
+ 			}
++			if (status == OTHER_CPU_HUNG && kernel_live == NULL) {
++				/* no mailbox: the hard deadline expired, just take the board back */
++				print("THE KERNEL DID NOT RETURN in %d s on core %x; back to the loader\n",
++				    (uint64_t)RETURN_DEADLINE_SECONDS, kernel_mpidr);
++				set_result("deadline", 0, 0);
++				write_logs(NULL, 0);
++				return 1;
++			}
+ 			if (status == OTHER_CPU_HUNG) {
+ 				/* the kernel still has that core; what it logged can be had all the same */
+ 				print("THE KERNEL HUNG on core %x: no sign of life for %d seconds; its log follows\n", kernel_mpidr,
+@@ -3931,6 +4252,37 @@ fb_command(char *cmd)
+ 				sent += chunk;
+ 			}
+ 			fb_reply("OKAY", "");
++		} else if (starts_with(cmd, "oem peek ")) {
++			/* oem peek <hex>: read one 32-bit word; the exception hook prints the
++			 * fault instead of an answer, which is exactly the probe result we want */
++			uint64_t addr = 0;
++			const char *p = cmd + 9;
++
++			while (*p == ' ')
++				p++;
++			for (; *p; p++) {
++				int d;
++				if (*p >= '0' && *p <= '9')
++					d = *p - '0';
++				else if (*p >= 'a' && *p <= 'f')
++					d = *p - 'a' + 10;
++				else if (*p >= 'A' && *p <= 'F')
++					d = *p - 'A' + 10;
++				else
++					break;
++				addr = (addr << 4) | (uint64_t)d;
++			}
++			uint32_t val = *(volatile uint32_t *)(uintptr_t)addr;
++			char hex[16];
++			int i;
++
++			for (i = 7; i >= 0; i--) {
++				uint32_t d = (val >> (i * 4)) & 0xf;
++				hex[7 - i] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
++			}
++			hex[8] = 0;
++			print("peek %x = %x\n", addr, (uint64_t)val);
++			fb_reply("OKAY", hex);
+ 		} else if (starts_with(cmd, "oem screenshot")) {
+ 			/* stage the raw framebuffer; "getvar screen" gives its geometry */
+ 			if (SCREEN.base == 0) {
+@@ -3940,6 +4292,11 @@ fb_command(char *cmd)
+ 			staged_data = (const char *)(uintptr_t)SCREEN.base;
+ 			staged_len = (uint64_t)SCREEN.stride * SCREEN.height;
+ 			fb_reply("OKAY", "");
++		} else if (starts_with(cmd, "oem ramoops")) {
++			/* stage the pstore/ramoops zone from the last boot (board DTS) */
++			staged_data = (const char *)(uintptr_t)0xF3F00000ULL;
++			staged_len = 0x100000;
++			fb_reply("OKAY", "");
+ 		} else if (starts_with(cmd, "oem recording")) {
+ 			/* stage what the kernel's display driver recorded (boot-arg rec_secs) */
+ 			if (recording_data == NULL) {
+@@ -3977,7 +4334,9 @@ fb_command(char *cmd)
+ 			log_len = 0;
+ 			print("== XNULOADER run (usb) ==\n");
+ 			if (!run_kernel(have_cp, cp)) {
+-				set_result("not-started", 0, 0);
++				if (!starts_with(last_result, "linux-fail")) {
++					set_result("not-started", 0, 0);
++				}
+ 				compose_logs(NULL, 0);
+ 			}
+ 		} else if (starts_with(cmd, "oem hang")) {
+@@ -4325,6 +4684,7 @@ efi_main(efi_handle image, efi_system_table *st)
+ 	}
+ 	print("== XNULOADER v3 ==\n");
+ 	print_banner();
++	ramlog_append();
+ 	if (volume_payload_bytes != 0) {
+ 		print("payload: %d bytes from \\EFI\\hakios\\payload.bin on the volume this loader was started from\n",
+ 		    volume_payload_bytes);
+@@ -4345,25 +4705,58 @@ efi_main(efi_handle image, efi_system_table *st)
+ 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
+ 		if (SCREEN.base == 0xE1000000ULL) {
+ 			PLAT = &platform_redwood;
++		} else if (SCREEN.base == 0xA0000000ULL) {
++			/* picasso's cont_splash_region (SM7250, Redmi K30 5G) */
++			PLAT = &platform_picasso;
+ 		} else {
+ 			ramfb_phone_screen();
+ 		}
+ 		print("display %d x %d at %x\n", (uint64_t)SCREEN.width, (uint64_t)SCREEN.height, SCREEN.base);
+ 	}
+ 	print("platform %s\n", PLAT->name);
++	print("breadcrumb %x\n", (uint64_t)BREADCRUMB);
+ 
+ 	install_exception_hook();
+ 	wdt_arm();
+ 
+ 	int have_payload = parse_payload(&pi, 0);
+-	if (have_payload && pi.usb_mode && usb_start()) {
+-		flush_log();
+-		usb_command_loop();
++	int usb_ready = 0;
++	print("payload: have=%d usb_mode=%d image=%x initrd=%x dtb=%x\n", (uint64_t)have_payload,
++	    (uint64_t)pi.usb_mode, (uint64_t)(unsigned long)pi.linux_image,
++	    (uint64_t)(unsigned long)pi.linux_initrd, (uint64_t)(unsigned long)pi.linux_dtb);
++	if (have_payload && pi.usb_mode) {
++		int usb_ok;
++
++		print("usb: starting\n");
++		usb_ok = usb_start();
++		print("usb: start %s\n", usb_ok ? "ok" : "FAILED");
++		if (usb_ok) {
++			usb_ready = 1;
++			flush_log();
++			usb_command_loop();
++		}
+ 	}
+ 
+-	/* One-shot mode: run the kernel that came with the image, then reset. */
++	/*
++	 * One-shot mode: run the kernel that came with the image. If it comes
++	 * back (the EFI stub returned instead of entering the kernel), stay in
++	 * the USB loop so the log and the error code can be read out; only a
++	 * kernel that never returns ends in the reset below.
++	 */
+ 	if (have_payload) {
+-		run_kernel(0, 0);
++		if (!run_kernel(0, 0)) {
++			print("loader: nothing started\n");
++		} else {
++			print("loader: the kernel came back; staying in the USB loop\n");
++		}
++		flush_log();
++		if (!usb_ready) {
++			usb_ready = usb_start();
++		}
++		if (usb_ready) {
++			usb_command_loop();
++		}
++		BS->stall(30000000);
+ 	}
+ 	reboot();
+ 	return 0;

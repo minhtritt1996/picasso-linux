@@ -6,10 +6,11 @@
 #
 #   ./build.sh linux [--clean]     Image + sm7250-xiaomi-picasso.dtb -> build/out/
 #   ./build.sh loader              linux.efi (patched XnuLoader) -> build/out/
-#   ./build.sh bootimg             boot-linux.img + payload-linux.bin (needs UEFI_FD,
-#                                  BOOTSHIM, UEFI_DTB; CMDLINE optional)
-#   ./build.sh bootimg-luma        boot-luma.img: Android boot v2 image for the stock
-#                                  bootloader (kernel, initramfs, DTB; LUMA_CMDLINE)
+#   ./build.sh bootimg             boot-linux.img + payload-linux.bin (uses uefi/ by
+#                                  default; override via UEFI_FD, BOOTSHIM, UEFI_DTB;
+#                                  NO_USB=1 for standalone auto-boot)
+#   ./build.sh bootimg-auto        boot-linux-auto.img: standalone auto-boot image
+#                                  (--no-usb, boots Linux automatically without a PC)
 #   ./build.sh export-patches      regenerate patches/linux/picasso/*.patch from build/linux
 #   ./build.sh check               apply the series to a fresh tree, build, run dtbs_check
 #   ./build.sh clean               remove build/
@@ -128,9 +129,9 @@ build_loader() {
 		git clone -q "$LOADER_UP" "$LOADER_WS"
 		git -C "$LOADER_WS" checkout -q "$LOADER_REV"
 		while read -r p; do
-			git -C "$LOADER_WS" apply --whitespace=nowarn "$ROOT/patches/loader/$p" ||
+			git -C "$LOADER_WS" apply --whitespace=nowarn "$ROOT/patches/xnuloader/$p" ||
 				die "failed to apply loader patch $p"
-		done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/patches/loader/series")
+		done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/patches/xnuloader/series")
 		echo "    [OK] loader patch series applied"
 	fi
 
@@ -156,43 +157,42 @@ build_loader() {
 }
 
 build_bootimg() {
-	local fd="${UEFI_FD:-}" shim="${BOOTSHIM:-}" udtb="${UEFI_DTB:-}" extra=() initrd_arg=()
+	local fd="${UEFI_FD:-$ROOT/uefi/SILICIUM_UEFI.fd}"
+	local shim="${BOOTSHIM:-$ROOT/uefi/BootShim.bin}"
+	local udtb="${UEFI_DTB:-$ROOT/uefi/picasso.dtb}"
+	local out_img="${BOOTIMG_OUT:-$OUT/boot-linux.img}"
+	local out_payload="${PAYLOAD_OUT:-$OUT/payload-linux.bin}"
+	local extra=() initrd_arg=()
 	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
 	[ -f "$OUT/linux.efi" ] || die "run ./build.sh loader first"
 	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
-	[ -n "${PAYLOAD_NO_INITRD:-}" ] || [ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/mkinitramfs.sh" >/dev/null
-	[ -f "$fd" ] || die "set UEFI_FD=/path/to/SILICIUM_UEFI.fd"
-	[ -f "$shim" ] || die "set BOOTSHIM=/path/to/BootShim.bin"
-	[ -f "$udtb" ] || die "set UEFI_DTB=/path/to/picasso.dtb"
+	[ -n "${PAYLOAD_NO_INITRD:-}" ] || [ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/scripts/mkinitramfs.sh" >/dev/null
+	[ -f "$fd" ] || die "missing UEFI_FD ($fd): place SILICIUM_UEFI.fd in uefi/ or set UEFI_FD=..."
+	[ -f "$shim" ] || die "missing BOOTSHIM ($shim)"
+	[ -f "$udtb" ] || die "missing UEFI_DTB ($udtb)"
 	# A payload without an explicit command line silently inherits the DTB's
 	# /chosen/bootargs, which once produced a kernel with no rdinit and panic=0
 	# (it panicked "unable to mount root fs" and stayed dead). Always pass one.
-	: "${CMDLINE:=console=tty0 loglevel=7 picasso_pinmux.mode=write \
+	if [ -n "${PAYLOAD_NO_INITRD:-}" ]; then
+		: "${CMDLINE:=console=tty0 loglevel=7 picasso_pinmux.mode=write \
 rdinit=/usr/lib/systemd/systemd systemd.show_status=1 \
 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10}"
+	else
+		: "${CMDLINE:=console=tty0 loglevel=7 selinux=0 picasso_pinmux.mode=write \
+rdinit=/init auto_reboot=0 systemd.show_status=1 \
+clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10}"
+	fi
 	extra=(--cmdline "$CMDLINE")
+	[ "${NO_USB:-0}" = "1" ] && extra+=(--no-usb)
 	# PAYLOAD_NO_INITRD=1: no initrd in the container; Linux boots the resident
 	# image sent with "fastboot oem ramdisk" (the loader patches /chosen)
 	[ -n "${PAYLOAD_NO_INITRD:-}" ] || initrd_arg=(--initrd "$OUT/initrd.cpio.gz")
-	python3 "$ROOT/tools/build-bootimg.py" \
-		-o "$OUT/boot-linux.img" --payload-out "$OUT/payload-linux.bin" \
+	python3 "$ROOT/scripts/build-bootimg.py" \
+		-o "$out_img" --payload-out "$out_payload" \
 		--loader "$OUT/linux.efi" --image "$OUT/Image" \
 		"${initrd_arg[@]}" \
 		--dtb "$OUT/sm7250-xiaomi-picasso.dtb" \
 		--uefi-fd "$fd" --bootshim "$shim" --uefi-dtb "$udtb" "${extra[@]}"
-}
-
-# The image the stock bootloader loads from `boot` (or `fastboot boot` loads into
-# RAM): Android boot v2 with the kernel, the initramfs and the DTB, at the load
-# addresses proven on this phone. RAM-only until the owner allows a flash.
-build_bootimg_luma() {
-	[ -f "$OUT/Image" ] || die "run ./build.sh linux first"
-	[ -f "$OUT/sm7250-xiaomi-picasso.dtb" ] || die "run ./build.sh linux first"
-	[ -f "$OUT/initrd.cpio.gz" ] || "$ROOT/tools/mkinitramfs.sh" >/dev/null
-	python3 "$ROOT/legacy/tools/build-luma-bootimg.py" \
-		--image "$OUT/Image" --initrd "$OUT/initrd.cpio.gz" \
-		--dtb "$OUT/sm7250-xiaomi-picasso.dtb" -o "$OUT/boot-luma.img" \
-		${LUMA_CMDLINE:+--cmdline "$LUMA_CMDLINE"}
 }
 
 export_patches() {
@@ -291,7 +291,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no bluetooth delta to export)"
 	fi
-	local pw="picasso/0016-ASoC-wcd938x-guard-sdw-capture-ports.patch"
+	local pw="picasso/0017-ASoC-wcd938x-guard-sdw-capture-ports.patch"
 	echo "==> Exporting $pw"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- sound/soc/codecs/wcd938x-sdw.c > "$t"
@@ -302,7 +302,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no wcd938x-sdw delta to export)"
 	fi
-	local pd="picasso/0017-async-status-diagnostics.patch"
+	local pd="picasso/0018-async-status-diagnostics.patch"
 	echo "==> Exporting $pd"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- sound/soc/qcom/qdsp6/q6asm.c \
@@ -314,7 +314,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no async-status delta to export)"
 	fi
-	local pn="picasso/0018-nfc-nxp-nci-keep-irq-disabled-when-cold.patch"
+	local pn="picasso/0019-nfc-nxp-nci-keep-irq-disabled-when-cold.patch"
 	echo "==> Exporting $pn"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- drivers/nfc/nxp-nci/i2c.c > "$t"
@@ -325,7 +325,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no nxp-nci delta to export)"
 	fi
-	local pa="picasso/0019-ASoC-q6afe-preserve-active-channels-mask.patch"
+	local pa="picasso/0020-ASoC-q6afe-preserve-active-channels-mask.patch"
 	echo "==> Exporting $pa"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- sound/soc/qcom/qdsp6/q6afe.c > "$t"
@@ -336,7 +336,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no q6afe delta to export)"
 	fi
-	local ps="picasso/0020-soundwire-qcom-resync-slave-status-after-alert.patch"
+	local ps="picasso/0021-soundwire-qcom-resync-slave-status-after-alert.patch"
 	echo "==> Exporting $ps"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- drivers/soundwire/qcom.c > "$t"
@@ -347,7 +347,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no soundwire/qcom delta to export)"
 	fi
-	local pp="picasso/0021-pinctrl-sm7250-egpio-ownership.patch"
+	local pp="picasso/0022-pinctrl-sm7250-egpio-ownership.patch"
 	echo "==> Exporting $pp"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- drivers/pinctrl/qcom/pinctrl-sm7250.c > "$t"
@@ -358,7 +358,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no pinctrl-sm7250 delta to export)"
 	fi
-	local pc="picasso/0022-clk-qcom-camcc-sm7250-pll2-v2.patch"
+	local pc="picasso/0023-clk-qcom-camcc-sm7250-pll2-v2.patch"
 	echo "==> Exporting $pc"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- drivers/clk/qcom/camcc-sm7250.c > "$t"
@@ -369,7 +369,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no camcc-sm7250 delta to export)"
 	fi
-	local pcam="picasso/0023-media-qcom-camss-add-sm7250-cphy.patch"
+	local pcam="picasso/0024-media-qcom-camss-add-sm7250-cphy.patch"
 	echo "==> Exporting $pcam"
 	t=$(mktemp)
 	git -C "$WS" diff HEAD -- \
@@ -388,7 +388,7 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no camss cphy delta to export)"
 	fi
-	local psens="picasso/0024-media-i2c-add-imx686-s5k3t2-drivers.patch"
+	local psens="picasso/0025-media-i2c-add-imx686-s5k3t2-drivers.patch"
 	echo "==> Exporting $psens"
 	git -C "$WS" add -N \
 		Documentation/devicetree/bindings/media/i2c/sony,imx686.yaml \
@@ -436,7 +436,7 @@ run_check() {
 		PATH="$ROOT/.venv-dtschema/bin:$PATH"
 	elif ! command -v dt-doc-validate >/dev/null; then
 		echo "    [WARN] dt-doc-validate not found: skipping dtbs_check"
-		echo "           ./tools/setup-dtschema.sh"
+		echo "           ./scripts/setup-dtschema.sh"
 		check_dtbs=0
 	fi
 	tmp=$(mktemp -d)
@@ -479,8 +479,12 @@ case "${1:-}" in
 	bootimg)
 		build_bootimg
 		;;
-	bootimg-luma)
-		build_bootimg_luma
+	bootimg-auto)
+		NO_USB=1 PAYLOAD_NO_INITRD="" \
+		CMDLINE="${CMDLINE:-console=ttynull loglevel=3 quiet vt.global_cursor_default=0 selinux=0 picasso_pinmux.mode=write rdinit=/init auto_reboot=0 systemd.show_status=0 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10}" \
+		BOOTIMG_OUT="$OUT/boot-linux-auto.img" \
+		PAYLOAD_OUT="$OUT/payload-linux-auto.bin" \
+		build_bootimg
 		;;
 	check)
 		run_check

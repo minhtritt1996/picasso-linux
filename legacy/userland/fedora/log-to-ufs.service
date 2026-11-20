@@ -1,8 +1,0 @@
-[Unit]
-Description=Copy the boot log to the phone's UFS (survives power cycles)
-ConditionPathExists=/dev/disk/by-partlabel/userdata
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/log-to-ufs.sh
-Nice=19

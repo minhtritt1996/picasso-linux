@@ -1,6 +1,6 @@
 # Thin wrapper: every target is a build.sh subcommand or a gate script, so the
 # behaviour lives in one place. RAM boot only; nothing here writes flash.
-.PHONY: help build kernel loader bootimg bootimg-luma check preflight clean
+.PHONY: help build kernel loader bootimg bootimg-auto check preflight clean
 
 help:
 	@./build.sh
@@ -16,14 +16,14 @@ loader:
 bootimg:
 	./build.sh bootimg
 
-bootimg-luma:
-	./build.sh bootimg-luma
+bootimg-auto:
+	./build.sh bootimg-auto
 
 check:
 	./build.sh check
 
 preflight:
-	tools/preflight.sh
+	scripts/preflight.sh
 
 clean:
 	./build.sh clean

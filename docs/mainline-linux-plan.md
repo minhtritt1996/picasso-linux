@@ -56,7 +56,7 @@ flowchart LR
 Sự thật đọc từ code, không phải suy đoán:
 
 - `prebuilt/BootShim.bin` + `uefi/files/Resources/DTBs/picasso.dtb` (670 468 B, trùng
-  `prebuilt/device-tree.dtb`) được đóng gói trong `tools/build-bootimg.py` thành Android boot
+  `prebuilt/device-tree.dtb`) được đóng gói trong `scripts/build-bootimg.py` thành Android boot
   image v1: `gzip(BootShim + SILICIUM_UEFI.fd + XNUP) + dtb`, chạy bằng
   `fastboot boot build/out/boot-picasso.img` (`README.md`).
 - `BootShim.S` (patch trong `hakios-uefi`) copy FD tới `0x9F100000`, rồi nếu 4 byte ngay sau FD
@@ -150,7 +150,7 @@ giá trị chính xác cho DTS mainline — không phải suy luận từ blob D
 | GPU: downstream dùng kgsl + libhybris; UI 1080x2400@120 Hz qua wlroots HWC | `docs/10-graphics-and-display-acceleration.md` | Mainline dùng `drm/msm` + freedreno/Turnip (avicii đã chứng minh), không dùng kgsl |
 | Boot image đã chứng minh: header v2, kernel@`0x8000`, ramdisk@`0x1200000`, tags@`0x100`, dtb@`0x1728000`, **bắt buộc có DTB**; kernel giải nén ~48 MB | `docs/02-boot-image-layout.md`, `scripts/pack_boot.sh` | Dùng đúng tham số này cho lớp ngoài của `boot-linux.img` |
 | cmdline downstream: `earlycon=msm_geni_serial,0x4a90000`, **không** `console=` (ttyMSM0 không bind) | `scripts/pack_boot.sh` | M1 thêm earlycon `0x4a90000` để có thêm một kênh log (nếu pad đã được XBL cấu hình) |
-| CABC/ACL/Smart DFPS của Xiaomi gây nháy sáng, phải khoá bằng `disp_param` | `docs/STATUS.md` §1 | Panel driver mainline phải set các thanh ghi này, không chỉ bật DSI |
+| CABC/ACL/Smart DFPS của Xiaomi gây nháy sáng, phải khoá bằng `disp_param` | `docs/hardware-status.md` §1 | Panel driver mainline phải set các thanh ghi này, không chỉ bật DSI |
 
 ---
 
@@ -182,7 +182,7 @@ mà không cần reset firmware. Không ghi UFS ở bất kỳ bước nào.
 
 **D4 — Logging: fbcon trước, USB sau, RAM marker là phương án cuối.**
 `simpledrm` cho log trên panel ngay M1; USB CDC-ACM ở M2. Nếu kernel chết trước USB: ghi
-marker vào vùng RAM reserved rồi đọc lại bằng `tools/fetch_data.py` (xnuloader upload) sau khi
+marker vào vùng RAM reserved rồi đọc lại bằng `fetch_data.py` (hakios-xnu-kernel/tools) (xnuloader upload) sau khi
 quay về fastboot. Không dùng `pstore/blk` vào `logdump` trừ khi được duyệt riêng.
 
 **D5 — Không đụng XNU path.** Patch Linux nằm ở `patches/linux/`, series riêng; `./build.sh all`
@@ -201,12 +201,12 @@ patches/linux/UPSTREAM              # pin: linux v7.3-rc7 + avicii commit
 patches/linux/series                # vendor/01..14, rồi picasso/0001..
 patches/linux/vendor/               # nguyên bản avicii (GPL-2.0, giữ header)
 patches/linux/picasso/0001..N.patch # delta của picasso
-patches/loader/                     # patch nhỏ lên xnuloader (thêm nhánh boot Image)
+patches/xnuloader/                     # patch nhỏ lên xnuloader (thêm nhánh boot Image)
 configs/linux/base.config           # arm64 defconfig + EFI/simpledrm/initramfs
 configs/linux/picasso.config        # UFS, USB, PMIC, drm/msm, ath10k...
-tools/build-bootimg.py        # XNUP{linux.efi,Image,initrd,dtb} + boot image
-tools/mkinitramfs.sh          # ramdisk: init tĩnh (in máy, tự reboot nếu được yêu cầu)
-tools/init.c                  # /init của ramdisk
+scripts/build-bootimg.py        # XNUP{linux.efi,Image,initrd,dtb} + boot image
+scripts/mkinitramfs.sh          # ramdisk: init tĩnh (in máy, tự reboot nếu được yêu cầu)
+initramfs/init.c                  # /init của ramdisk
 ```
 
 ### 3.2 Series patch
@@ -313,7 +313,7 @@ và để cô lập lỗi.
 
 ### P1 — Boot vehicle
 
-1. `patches/loader/0001-xnuloader-boot-mainline-linux-image.patch`: thêm nhánh Linux vào
+1. `patches/xnuloader/0001-xnuloader-boot-mainline-linux-image.patch`: thêm nhánh Linux vào
    `xnuloader` (freestanding UEFI app, clang-15 + lld-link):
    - parse payload: entry `Image`, `initrd`, `dtb`;
    - cài DTB vào EFI configuration table (`DEVICE_TREE_GUID`), ramdisk đọc từ
@@ -323,7 +323,7 @@ và để cô lập lỗi.
    - giữ nguyên toàn bộ fastboot listener sẵn có (`stage`, `oem run`) — nhờ vậy vòng iterate
      dùng lại đúng giao thức của XNU, không phải viết USB stack mới.
    Build: `./build.sh loader` → `build/out/linux.efi` (cần `IDENTITY_H` cho upstream).
-2. `tools/build-bootimg.py`: `gzip(BootShim + FD + XNUP{loader.efi=linux.efi, Image,
+2. `scripts/build-bootimg.py`: `gzip(BootShim + FD + XNUP{loader.efi=linux.efi, Image,
    initrd.cpio.gz, picasso.dtb}) + UEFI dtb` (dtb section vẫn là `picasso.dtb` của UEFI, không
    phải DTB mainline). Initrd là cpio.gz với init tĩnh, hiện ~0.3 MiB, phải < 12 MiB để vừa
    ngân sách 64 MiB.
@@ -347,7 +347,7 @@ và để cô lập lỗi.
 fastboot boot build/out/boot-linux.img
 
 # mỗi lần sửa kernel/initrd/dtb: repack rồi stage cả payload, không upload lại UEFI
-./tools/build-bootimg.py ... --payload-out build/out/payload-linux.bin
+./scripts/build-bootimg.py ... --payload-out build/out/payload-linux.bin
 fastboot stage build/out/payload-linux.bin
 fastboot oem run
 ```
@@ -360,7 +360,7 @@ khi kịp stage, quay lại `fastboot boot` từ bootloader (RAM-only). Khi có 
 
 ### P2 — initramfs + USB
 
-1. `tools/mkinitramfs.sh`: busybox + `init` tối giản in `uname -a`, `nproc`, mount
+1. `scripts/mkinitramfs.sh`: busybox + `init` tối giản in `uname -a`, `nproc`, mount
    proc/sys/dev, bật gadget NCM+ACM giống `initramfs/init` của avicii, telnet/shell; thêm
    `reboot` (đưa về loader) và, khi có USB network, `kexec` để thay kernel không cần reset.
 2. DTS: `usb@a600000` (dwc3), QMP PHY, SS PHY, `iommus` (stream ID từ vendor DT), `rpmhpd`,
@@ -433,7 +433,7 @@ khi kịp stage, quay lại `fastboot boot` từ bootloader (RAM-only). Khi có 
 | `sm7250.dtsi` mang reserved-memory của OnePlus | **Chắc chắn** | `picasso/0001` override toàn bộ; đối chiếu vendor DT + `soc.args` |
 | Panel DSC video mode chưa được mainline DSI hỗ trợ | TB–cao | `simpledrm` cho M1–M3; P4 mới làm; tách patch DSI DSC để dễ revert |
 | UFS treo do thiếu regulator / 32-bit DMA | TB | Giữ rail always-on từ XBL (avicii làm vậy), giữ quirk DMA |
-| Không có serial, kernel chết im lặng | Cao | fbcon + USB ACM + RAM marker đọc bằng `tools/fetch_data.py` |
+| Không có serial, kernel chết im lặng | Cao | fbcon + USB ACM + RAM marker đọc bằng `fetch_data.py` (hakios-xnu-kernel/tools) |
 | Watchdog reset trước khi kịp đọc log | TB | Tắt watchdog trong kernel khi bring-up |
 | Firmware (Wi-Fi/ADSP/GPU zap) thiếu hoặc sai path | TB | `pull-firmware.sh` sẵn có; đặt dưới `/lib/firmware/qcom/sm7250/xiaomi/picasso/` |
 | Board data Wi-Fi `bdf_g7a.bin` không đúng định dạng ath10k | TB | Thử `bdwlan.elf`/`board-2.bin`; nguồn `bdwlan.*` lấy từ vendor |
@@ -456,7 +456,7 @@ khi kịp stage, quay lại `fastboot boot` từ bootloader (RAM-only). Khi có 
 2. Copy 14 patch vào `patches/linux/vendor/`, tạo `series`, kiểm tra apply sạch.
 3. Viết `build.sh linux` + `configs/linux/{base,picasso}.config`; build `Image` + dtb.
 4. Viết `picasso/0001` (reserved-memory) và `picasso/0002` (DTS tối thiểu); `dtbs_check`.
-5. Viết `uefi/linuxloader/` + `tools/build-bootimg.py`.
+5. Viết `uefi/linuxloader/` + `scripts/build-bootimg.py`.
 6. Boot M1, chụp panel, lưu ảnh + log vào `note.md`.
 7. Viết initramfs USB, đạt M2, rồi mới mở UFS.
 8. Sau mỗi mốc: `./build.sh export-linux-patches`, cập nhật `note.md` và `device.conf`

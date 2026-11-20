@@ -68,23 +68,22 @@ upstream/hakios-xnu-kernel  XnuLoader source cho EFI launcher (read-only, gitign
 patches/linux/UPSTREAM      pin commit của upstream, source of truth duy nhất
 patches/linux/series        thứ tự patch (vendor/ trước, picasso/ sau)
 patches/linux/vendor/       14 patch avicii-mainline, nguyên bản — không sửa
-patches/linux/picasso/      24 patch delta của picasso (export từ build/linux/)
+patches/linux/picasso/      25 patch delta của picasso (export từ build/linux/)
 
 configs/linux/              Kconfig fragment (picasso.config)
-prebuilt/                   identity.h, fw-gpu/, fw-touch/, device-tree.dtb
-tools/
-  build-bootimg.py          XNUP payload + boot-linux.img (UEFI chain)
-  build-luma-bootimg.py     Android boot v2 cho path ABL stock
-  mkinitramfs.sh            RAM initramfs nhỏ (~0.3 MB, static init)
-  pack-rootfs.sh            RAM root filesystem đầy đủ
-  console_cmd.py            USB-ACM console: một lệnh, capture, reboot
-  ramboot-cycle.sh          một hardware gate cycle (arm → stage → run → log)
-  policy-scan.sh            gate 1 rules
-  preflight.sh              gate 1 locally / gate 3 static half trong CI
+prebuilt/                   identity.h (fw-gpu/, fw-touch/, fw-wcn3990/ lấy từ máy, gitignored)
+uefi/                       BootShim.bin; picasso.dtb + SILICIUM_UEFI.fd (gitignored, xem uefi/README.md)
+scripts/                    build-bootimg.py, mkinitramfs.sh, gen-boot-logo.py, console_cmd.py,
+                            ramboot-cycle.sh, policy-scan.sh, preflight.sh, setup-dtschema.sh
+initramfs/                  init.c (PID 1 trong ramdisk), boot_logo.h, tone/, gnss/, bin/ (gitignored)
+bringup/                    công cụ debug trên máy: audiocheck, touch-probe, pmtest-ladder, suspend-*
 docs/
+  hardware-status.md        trạng thái phần cứng hiện tại + giới hạn đã biết
   mainline-linux-plan.md    kế hoạch kỹ thuật đầy đủ
-  dts-crosswalk.md          crosswalk nguồn gốc từng DT node quan trọng
-  luma-port-brief.md        tóm tắt port Luma (ABL path)
+  dts-crosswalk.md          nguồn gốc từng DT node quan trọng
+  denial-mobile-architecture.md
+  bringup/                  nghiên cứu từng mảng (camera, nfc, gnss, audio, ...)
+  changelog/boot-history.md nhật ký từng lần boot trên máy
 .github/
   workflows/ci.yml          CI: apply series + clean builds
   workflows/README.md       mô tả 4 gates
@@ -114,7 +113,7 @@ build/                      cây build cô lập + build/out/ (gitignored)
 | 13-media | Venus codec, CAMSS |
 | 14-dts | DTS OnePlus Nord (avicii) |
 
-### picasso/ — delta của thiết bị (24 patches)
+### picasso/ — delta của thiết bị (25 patches)
 
 | Patch | Nội dung |
 |---|---|
@@ -128,21 +127,21 @@ build/                      cây build cô lập + build/out/ (gitignored)
 | 0008 | bluetooth: hci_qca WCN3991 flow control |
 | 0009 | drm/msm/a6xx: fix OPP use-after-free |
 | 0010 | drm/msm/a6xx: fix RPMh dependency votes |
-| 0011 (input) | touch: Novatek NT36672C SPI driver (SRAM firmware, page cache, IRQ) |
-| 0011 (net) | qrtr-ns: retry announce on EAGAIN (Wi-Fi bringup) |
-| 0012 | backlight: qcom-wled OVP IRQ balance |
-| 0013 | drm/msm: drop per-frame pr_info (console spam) |
-| 0014 | media/venus: skip IRIS1 power collapse on idle timeout |
-| 0015 | power-supply: pm7250b QG battery |
-| 0016 | ASoC/wcd938x: guard SoundWire capture ports |
-| 0017 | async status diagnostics (init monitor) |
-| 0018 | nfc: NXP NCI keep IRQ disabled when cold |
-| 0019 | ASoC/q6afe: preserve active channels mask |
-| 0020 | soundwire/qcom: resync slave status after alert |
-| 0021 | pinctrl SM7250: eGPIO ownership |
-| 0022 | clk/qcom/camcc: SM7250 PLL2 v2 |
-| 0023 | media/camss: add SM7250 CPHY |
-| 0024 | media/i2c: add imx686 + s5k3t2 camera drivers |
+| 0011 | touch: Novatek NT36672C SPI driver (SRAM firmware, page cache, IRQ) |
+| 0012 | qrtr-ns: retry announce on EAGAIN (Wi-Fi bringup) |
+| 0013 | backlight: qcom-wled OVP IRQ balance |
+| 0014 | drm/msm: drop per-frame pr_info (console spam) |
+| 0015 | media/venus: skip IRIS1 power collapse on idle timeout |
+| 0016 | power-supply: pm7250b QG battery |
+| 0017 | ASoC/wcd938x: guard SoundWire capture ports |
+| 0018 | async status diagnostics (init monitor) |
+| 0019 | nfc: NXP NCI keep IRQ disabled when cold |
+| 0020 | ASoC/q6afe: preserve active channels mask |
+| 0021 | soundwire/qcom: resync slave status after alert |
+| 0022 | pinctrl SM7250: eGPIO ownership |
+| 0023 | clk/qcom/camcc: SM7250 PLL2 v2 |
+| 0024 | media/camss: add SM7250 CPHY |
+| 0025 | media/i2c: add imx686 + s5k3t2 camera drivers |
 
 ---
 
@@ -156,10 +155,10 @@ build/                      cây build cô lập + build/out/ (gitignored)
 ```
 
 ```sh
-./tools/mkinitramfs.sh          # build/out/initrd.cpio.gz (~0.3 MB)
+./scripts/mkinitramfs.sh          # build/out/initrd.cpio.gz (~0.6 MB, xz)
 
-UEFI_FD=<SILICIUM_UEFI.fd> BOOTSHIM=<BootShim.bin> UEFI_DTB=<picasso.dtb> \
-  ./build.sh bootimg            # build/out/boot-linux.img + payload-linux.bin
+./build.sh bootimg              # build/out/boot-linux.img + payload-linux.bin (USB fastboot listener)
+./build.sh bootimg-auto         # build/out/boot-linux-auto.img (one-shot auto-boot, không cần máy tính)
 ```
 
 **Yêu cầu:** `aarch64-linux-gnu-gcc`, `make`, `bison`, `flex`, `bc`, `libssl-dev`,
@@ -167,7 +166,7 @@ UEFI_FD=<SILICIUM_UEFI.fd> BOOTSHIM=<BootShim.bin> UEFI_DTB=<picasso.dtb> \
 
 **dtschema** (một lần duy nhất):
 ```sh
-./tools/setup-dtschema.sh       # virtualenv local, không cần root
+./scripts/setup-dtschema.sh       # virtualenv local, không cần root
 ```
 Nếu thiếu, `./build.sh check` vẫn chạy nhưng bỏ qua schema validation.
 
@@ -176,18 +175,21 @@ Nếu thiếu, `./build.sh check` vẫn chạy nhưng bỏ qua schema validation
 ## Boot
 
 ```sh
-# lần đầu, từ stock bootloader
+# boot tự động hoàn toàn từ UEFI (không cần máy tính sau khi cài boot-linux-auto.img)
+fastboot boot build/out/boot-linux-auto.img
+
+# chế độ dev với USB fastboot listener trong xnuloader
 fastboot boot build/out/boot-linux.img
 
-# mọi lần sau (kernel/initramfs mới): không cần UFS
+# mọi lần sau khi ở chế độ dev: không cần UFS
 fastboot stage build/out/payload-linux.bin && fastboot oem run
 ```
 
 ```sh
 # console USB
-python3 tools/console_cmd.py uname
-python3 tools/console_cmd.py mem
-python3 tools/console_cmd.py reboot
+python3 scripts/console_cmd.py uname
+python3 scripts/console_cmd.py mem
+python3 scripts/console_cmd.py reboot
 
 # đọc log sau reset
 fastboot get_staged
@@ -199,14 +201,21 @@ fastboot get_staged
 
 | Gate | Lệnh | Chứng minh |
 |---|---|---|
-| 1 preflight | `tools/preflight.sh` | docs, policy scan, patch series, syntax, whitespace |
+| 1 preflight | `scripts/preflight.sh` | docs, policy scan, patch series, syntax, whitespace |
 | 2 change | PR checklist | chỉ patch; `vendor/` không được sửa |
 | 3 CI | `./build.sh check` | 39 patches apply sạch; mọi artifact build được |
-| 4 hardware | `tools/ramboot-cycle.sh` | một RAM boot: arm → stage → run → capture; không flash |
+| 4 hardware | `scripts/ramboot-cycle.sh` | một RAM boot: arm → stage → run → capture; không flash |
 
 Mô tả đầy đủ: [`.github/workflows/README.md`](.github/workflows/README.md).
 
 ---
+
+## Tài liệu
+
+- [`docs/hardware-status.md`](docs/hardware-status.md) — trạng thái hiện tại, giới hạn đã biết
+- [`docs/changelog/boot-history.md`](docs/changelog/boot-history.md) — nhật ký từng lần boot (cmdline, hash, log)
+- [`docs/bringup/`](docs/bringup/) — nghiên cứu theo từng mảng phần cứng
+- [`docs/mainline-linux-plan.md`](docs/mainline-linux-plan.md), [`docs/dts-crosswalk.md`](docs/dts-crosswalk.md)
 
 ## Nguồn tham chiếu
 

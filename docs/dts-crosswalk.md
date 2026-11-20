@@ -121,7 +121,7 @@ These are controller SRAM/register accesses, with no persistent flash program.
 | SWR port maps | `lito-audio-overlay.dtsi:49-55` | PWM_OUT1/ADC1-4/DMIC0-7 → integers (reused verbatim) |
 | LPI pinctrl | `lito-lpi.dtsi:1-29`, `:1351-1545` | `lpi_pinctrl@33c0000`, slew `0x355a000`; TX clk gpio0 data1/2 gpio1/2; RX clk gpio3 data gpio4/5 |
 | DMIC pads | vendor `cdc-dmic23/45` | gpio8/9 (dmic2), gpio12/13 (dmic3), drive 8 mA |
-| card | mainline `sm8250.c` + `q6asm-dai` | MM2 = capture FE (`Q6ASM_DAI_TX`), BE `TX_CODEC_DMA_TX_3`; `0019*` preserves `active_channels_mask` in `q6afe_cdc_dma_port_prepare`; `0020*` resyncs `sdw:3:0` `Alert`->`Attached`; `tools/init.c` UCM2 `Picasso-HiFi.conf` exposes `SectionDevice."Mic"` (`AMIC1`/`ADC1` on `DEC0`) |
+| card | mainline `sm8250.c` + `q6asm-dai` | MM2 = capture FE (`Q6ASM_DAI_TX`), BE `TX_CODEC_DMA_TX_3`; `0019*` preserves `active_channels_mask` in `q6afe_cdc_dma_port_prepare`; `0020*` resyncs `sdw:3:0` `Alert`->`Attached`; `initramfs/init.c` UCM2 `Picasso-HiFi.conf` exposes `SectionDevice."Mic"` (`AMIC1`/`ADC1` on `DEC0`) |
 
 ## Camera (M4, stage 1–3)
 
@@ -141,5 +141,5 @@ These are controller SRAM/register accesses, with no persistent flash program.
 
 | Hạng mục | Downstream | Giá trị |
 |---|---|---|
-| GNSS | none in vendor DTS; `image/modemr.jsn` `{"provider":"gps","service":"gps_service"}` | engine is a PD of the modem image; reached only via QMI LOC (service 16) from a single persistent `AF_QIPCRTR` client (`tools/gnss/picasso-gnss.c` -> `picasso-gnss.service`) |
+| GNSS | none in vendor DTS; `image/modemr.jsn` `{"provider":"gps","service":"gps_service"}` | engine is a PD of the modem image; reached only via QMI LOC (service 16) from a single persistent `AF_QIPCRTR` client (`initramfs/gnss/picasso-gnss.c` -> `picasso-gnss.service`) |
 | WLAN AP | `lito.dtsi:3635-3667` | WCN3990 nodes already complete in mainline; AP mode + same-channel concurrency advertised by the firmware |
