@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..285e1abf7
+index 000000000..8022a453f
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,1636 @@
+@@ -0,0 +1,1642 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -1284,6 +1284,7 @@ index 000000000..285e1abf7
 +
 +		orientation = <1>;
 +		rotation = <90>;
++		lens-focus = <&vcm_wide>;
 +
 +		port {
 +			imx686_ep: endpoint {
@@ -1293,6 +1294,11 @@ index 000000000..285e1abf7
 +				remote-endpoint = <&camss_csiphy1_ep>;
 +			};
 +		};
++	};
++
++	vcm_wide: lens@c {
++		compatible = "dongwoon,dw9807-vcm";
++		reg = <0x0c>;
 +	};
 +};
 +

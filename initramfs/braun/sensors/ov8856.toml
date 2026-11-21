@@ -1,0 +1,5 @@
+# OmniVision OV8856. Gain is code / 128, as in ov8856.c (128..2047 -> 1x..16x).
+black = 64
+white = 1000
+analogue_gain = { m0 = 1, c0 = 0, m1 = 0, c1 = 128 }
+max_gain = 16

@@ -288,7 +288,7 @@ index d04bd5724..59a35d87c 100644
  obj-$(CONFIG_VIDEO_S5KJN1) += s5kjn1.o
 diff --git a/drivers/media/i2c/imx686.c b/drivers/media/i2c/imx686.c
 new file mode 100644
-index 000000000..e51cfa528
+index 000000000..966dea849
 --- /dev/null
 +++ b/drivers/media/i2c/imx686.c
 @@ -0,0 +1,2179 @@
@@ -1533,7 +1533,7 @@ index 000000000..e51cfa528
 +	{ CCI_REG8(0x030e), 0x02 },
 +	{ CCI_REG8(0x030f), 0x56 },
 +	{ CCI_REG8(0x0310), 0x01 },
-+	{ CCI_REG8(0x30d9), 0x00 },
++	{ CCI_REG8(0x30d9), 0x01 }, /* QBC 2x2 Bayer binning when PDAF dt=0x30 disabled */
 +	{ CCI_REG8(0x32d5), 0x00 },
 +	{ CCI_REG8(0x32d6), 0x00 },
 +	{ CCI_REG8(0x403d), 0x05 },
@@ -1625,7 +1625,7 @@ index 000000000..e51cfa528
 +	{ CCI_REG8(0x030e), 0x01 },
 +	{ CCI_REG8(0x030f), 0xc8 },
 +	{ CCI_REG8(0x0310), 0x01 },
-+	{ CCI_REG8(0x30d9), 0x00 },
++	{ CCI_REG8(0x30d9), 0x01 }, /* QBC 2x2 Bayer binning when PDAF dt=0x30 disabled */
 +	{ CCI_REG8(0x32d5), 0x00 },
 +	{ CCI_REG8(0x32d6), 0x00 },
 +	{ CCI_REG8(0x403d), 0x05 },
@@ -1955,7 +1955,7 @@ index 000000000..e51cfa528
 +{
 +	fmt->width = mode->width;
 +	fmt->height = mode->height;
-+	fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
++	fmt->code = MEDIA_BUS_FMT_SRGGB10_1X10;
 +	fmt->field = V4L2_FIELD_NONE;
 +	fmt->colorspace = V4L2_COLORSPACE_RAW;
 +	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
@@ -1978,7 +1978,7 @@ index 000000000..e51cfa528
 +	if (code->index > 0)
 +		return -EINVAL;
 +
-+	code->code = MEDIA_BUS_FMT_SBGGR10_1X10;
++	code->code = MEDIA_BUS_FMT_SRGGB10_1X10;
 +
 +	return 0;
 +}
@@ -1990,7 +1990,7 @@ index 000000000..e51cfa528
 +	if (fse->index >= ARRAY_SIZE(imx686_modes))
 +		return -EINVAL;
 +
-+	if (fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
++	if (fse->code != MEDIA_BUS_FMT_SRGGB10_1X10)
 +		return -EINVAL;
 +
 +	fse->min_width = imx686_modes[fse->index].width;

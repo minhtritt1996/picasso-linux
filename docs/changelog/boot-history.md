@@ -2836,3 +2836,29 @@ Verified via RAM boot `#220` (`<lan-ip>`, cmdline
    - `build/out/sm7250-xiaomi-picasso.dtb`: `fbbe0f50b2934cc103ffbd32cb29a06212a55cc597d16e18bc38faccbd952a62`
    - `build/out/boot-linux.img`: `2bc0821be67dfdae241b1e7bca2b1913f5cb7a0e059490e2e8b4205d1af67151`
    - `build/out/payload-linux.bin`: `4b40548a6ae515d3c3a25e13294f1c1bd8b603a21db30239cddfba00e33ea6dc`
+
+### 32. IMX686 QBC/Bayer Fix, DW9800W Autofocus, Chromatix7 Calibrations & Boot-Packaged PipeWire DSP — VERIFIED on live hardware (2026-11-21)
+
+Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cdc12-dirty #5 SMP PREEMPT Sat Nov 21 09:21:10 +07 2026 aarch64`, cmdline
+`console=ttynull loglevel=3 quiet vt.global_cursor_default=0 selinux=0 picasso_pinmux.mode=write rdinit=/init auto_reboot=0 systemd.show_status=0 clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=10`):
+
+1. **IMX686 `4624x3472` & `4624x2600` QBC Binning + Bayer CFA Fix (`0025-media-i2c-add-imx686-s5k3t2-drivers.patch`)**:
+   - **Root cause**: Zeroing PDAF `dt=0x30` registers (`0x30d8`, `0x3092`, `0x4324`, `0x4325`) while leaving `0x30d9 = 0x00` caused IMX686 modes 1 and 2 to output half-height (`1736/3472`, `1300/2600`) 4×4 Quad-Bayer frames. Additionally, Sony color bars (`test_pattern=2`) and real-scene channel ratios proved the sensor outputs `MEDIA_BUS_FMT_SRGGB10_1X10` rather than `MEDIA_BUS_FMT_SBGGR10_1X10`.
+   - **Fix**: Set `{ CCI_REG8(0x30d9), 0x01 }` in `imx686_mode_1_4624x3472_30fps_regs` and `imx686_mode_2_4624x2600_60fps_regs`, and switched `imx686.c` format/enum codes to `MEDIA_BUS_FMT_SRGGB10_1X10`.
+
+2. **DW9800W VCM Hardware Autofocus (`0002*`, `configs/linux/picasso.config`)**:
+   - Enabled `CONFIG_VIDEO_DW9807_VCM=y` and added `vcm_wide: lens@c` (`dongwoon,dw9807-vcm`) on `&cci0_i2c1` with `lens-focus = <&vcm_wide>` on `camera@1a` (`imx686`).
+   - Live capture via `braunctl shot imx686` moved `dw9807 4-000c` `focus_absolute` (`0` -> `322`), producing a full `3472x4624` (`4.8 MiB`) portrait JPEG with accurate colors and white balance.
+
+3. **Boot-Packaged `braun` Calibrations & PipeWire Speaker DSP (`initramfs/`, `scripts/mkinitramfs.sh`)**:
+   - Packaged Chromatix7 AWB Planckian `locus`, per-CCT `ccm`, and `shading` tables (`initramfs/braun/calibrations/{imx686,ov8856,s5k3t2}.toml`, with DW9800W EEPROM travel `[300, 860]`, start `420`) plus sensor gain profiles (`initramfs/braun/sensors/*.toml`).
+   - Packaged speaker DSP (`initramfs/pipewire/99-picasso-speaker-dsp.conf`, `preamp Gain = 0.0`, `priority.session = 1005`) and WirePlumber speaker sink priority (`900` in `50-picasso-alsa.conf`) via tmpfs bind-mounts in `initramfs/init.c` (zero writes to `userdata`).
+   - Verified `braunctl cameras` reports all 3 cameras `tuned` (`imx686: 3472x4624, focus, tuned`; `ov8856: 2464x3280, tuned`; `s5k3t2: 1940x2592, tuned`) and PipeWire sink priorities preserve Bluetooth auto-switching (`bluez_output` `1010` > `picasso_speaker_dsp` `1005` > `HiFi__Speaker__sink` `900`).
+
+4. **Gates & Artifact SHA-256**:
+   - `./build.sh check`: `[OK] 39 patches applied`, `dtbs_check: 12 schema diagnostics from the vendor series`.
+   - `scripts/preflight.sh`: `preflight: OK` (`policy-scan: OK`).
+   - `build/out/Image`: `5f89f5a489c1abd3ce40a5f138f74fdbb972b31c733cdb8ec65bedabe31e5b71`
+   - `build/out/initrd.cpio.gz`: `8ec88e57ef139eaf985c42c3886cc6ce07c13f572a4925a23d0de4740315096c`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `cd8aba6d59a43751252f02b5f1da928bb7a4e447960c068fc407bfb50448c696`
+   - `build/out/boot-linux-auto.img`: `f148746ba67a02b2cf3993a434320129c4c45c7c8910d60a40f9c0fcdee599ee`

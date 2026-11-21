@@ -1104,6 +1104,67 @@ static int copy_file_mode(const char *src, const char *dst, mode_t mode)
 	return n < 0 ? -1 : 0;
 }
 
+static int copy_dir_files(const char *src_dir, const char *dst_dir, mode_t mode)
+{
+	DIR *d;
+	struct dirent *de;
+	char src[512], dst[512];
+	struct stat st;
+
+	d = opendir(src_dir);
+	if (!d)
+		return -1;
+	mkdir_parents(dst_dir);
+	chmod(dst_dir, 0755);
+	while ((de = readdir(d)) != NULL) {
+		if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+			continue;
+		if (snprintf(src, sizeof(src), "%s/%s", src_dir, de->d_name) >= (int)sizeof(src))
+			continue;
+		if (snprintf(dst, sizeof(dst), "%s/%s", dst_dir, de->d_name) >= (int)sizeof(dst))
+			continue;
+		if (stat(src, &st) != 0 || !S_ISREG(st.st_mode))
+			continue;
+		if (copy_file_mode(src, dst, mode) == 0)
+			chmod(dst, mode);
+	}
+	closedir(d);
+	return 0;
+}
+
+/* Copy a config directory and its immediate subdirectories into dst_dir cleanly. */
+static int copy_dir_tree1(const char *src_dir, const char *dst_dir, mode_t mode)
+{
+	DIR *d;
+	struct dirent *de;
+	char src[512], dst[512];
+	struct stat st;
+
+	d = opendir(src_dir);
+	if (!d)
+		return -1;
+	mkdir_parents(dst_dir);
+	chmod(dst_dir, 0755);
+	while ((de = readdir(d)) != NULL) {
+		if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+			continue;
+		if (snprintf(src, sizeof(src), "%s/%s", src_dir, de->d_name) >= (int)sizeof(src))
+			continue;
+		if (snprintf(dst, sizeof(dst), "%s/%s", dst_dir, de->d_name) >= (int)sizeof(dst))
+			continue;
+		if (lstat(src, &st) != 0)
+			continue;
+		if (S_ISDIR(st.st_mode)) {
+			copy_dir_files(src, dst, mode);
+		} else if (S_ISREG(st.st_mode)) {
+			if (copy_file_mode(src, dst, mode) == 0)
+				chmod(dst, mode);
+		}
+	}
+	closedir(d);
+	return 0;
+}
+
 /*
  * Device policy that must not live in the image: the system is upgraded as
  * shipped, so per-phone decisions go into /run drop-ins, which systemd reads and
@@ -1299,6 +1360,16 @@ static void write_device_dropins(const char *newroot)
 			"        audio.channels = 1\n"
 			"      }\n"
 			"    }\n"
+			"  },\n"
+			"  {\n"
+			"    matches = [\n"
+			"      { node.name = \"alsa_output.platform-sound.HiFi__Speaker__sink\" }\n"
+			"    ]\n"
+			"    actions = {\n"
+			"      update-props = {\n"
+			"        priority.session = 900\n"
+			"      }\n"
+			"    }\n"
 			"  }\n"
 			"]\n";
 		static const char ucm_hifi[] =
@@ -1484,6 +1555,71 @@ static void write_device_dropins(const char *newroot)
 				klog("root: picasso-gnss.service enabled\n");
 		} else {
 			klog("root: copy picasso-gnss failed: %s\n", strerror(errno));
+		}
+	}
+
+	/* Camera sensor profiles (braun): /usr/share/braun/sensors */
+	{
+		char dst[128], run_dir[128];
+
+		snprintf(dst, sizeof(dst), "%.96s/usr/share/braun/sensors", newroot);
+		if (access(dst, F_OK) == 0 && access("/share/braun/sensors", F_OK) == 0) {
+			snprintf(run_dir, sizeof(run_dir), "%.96s/run/braun/sensors", newroot);
+			(void)!copy_dir_files(dst, run_dir, 0644);
+			if (copy_dir_files("/share/braun/sensors", run_dir, 0644) == 0 &&
+			    mount(run_dir, dst, NULL, MS_BIND, NULL) == 0)
+				klog("root: braun sensor profiles bound\n");
+			else
+				klog("root: braun sensor profiles failed: %s\n", strerror(errno));
+		}
+	}
+
+	/* Camera calibrations (braun): /usr/lib/modules/<uname -r>/braun */
+	{
+		struct utsname uts;
+		char dst[128], run_root[128], rel_dir[200], cal_dir[256];
+
+		snprintf(dst, sizeof(dst), "%.96s/usr/lib/modules", newroot);
+		if (access(dst, F_OK) == 0 && access("/share/braun/calibrations", F_OK) == 0 &&
+		    uname(&uts) == 0) {
+			snprintf(run_root, sizeof(run_root), "%.96s/run/braun/modules", newroot);
+			snprintf(rel_dir, sizeof(rel_dir), "%s/%.64s", run_root, uts.release);
+			snprintf(cal_dir, sizeof(cal_dir), "%s/braun", rel_dir);
+			mkdir_parents(cal_dir);
+			chmod(run_root, 0755);
+			chmod(rel_dir, 0755);
+			chmod(cal_dir, 0755);
+			if (copy_dir_files("/share/braun/calibrations", cal_dir, 0644) == 0 &&
+			    mount(run_root, dst, NULL, MS_BIND, NULL) == 0)
+				klog("root: braun calibrations bound (%s)\n", uts.release);
+			else
+				klog("root: braun calibrations failed: %s\n", strerror(errno));
+		}
+	}
+
+	/* PipeWire speaker DSP drop-in: /etc/pipewire/pipewire.conf.d (or /etc/pipewire if fresh userdata) */
+	{
+		char dst_d[160], dst_etc[128], run_d[192], run_etc[128];
+
+		snprintf(dst_d, sizeof(dst_d), "%.96s/etc/pipewire/pipewire.conf.d", newroot);
+		snprintf(dst_etc, sizeof(dst_etc), "%.96s/etc/pipewire", newroot);
+		if (access("/share/pipewire", F_OK) == 0 && access(dst_d, F_OK) == 0) {
+			snprintf(run_d, sizeof(run_d), "%.96s/run/pipewire/pipewire.conf.d", newroot);
+			(void)!copy_dir_files(dst_d, run_d, 0644);
+			if (copy_dir_files("/share/pipewire", run_d, 0644) == 0 &&
+			    mount(run_d, dst_d, NULL, MS_BIND, NULL) == 0)
+				klog("root: pipewire speaker DSP bound\n");
+			else
+				klog("root: pipewire speaker DSP failed: %s\n", strerror(errno));
+		} else if (access("/share/pipewire", F_OK) == 0 && access(dst_etc, F_OK) == 0) {
+			snprintf(run_etc, sizeof(run_etc), "%.96s/run/pipewire/etc", newroot);
+			snprintf(run_d, sizeof(run_d), "%s/pipewire.conf.d", run_etc);
+			(void)!copy_dir_tree1(dst_etc, run_etc, 0644);
+			if (copy_dir_files("/share/pipewire", run_d, 0644) == 0 &&
+			    mount(run_etc, dst_etc, NULL, MS_BIND, NULL) == 0)
+				klog("root: pipewire speaker DSP bound (/etc/pipewire)\n");
+			else
+				klog("root: pipewire speaker DSP (/etc/pipewire) failed: %s\n", strerror(errno));
 		}
 	}
 }

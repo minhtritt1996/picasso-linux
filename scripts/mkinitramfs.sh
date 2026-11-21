@@ -77,6 +77,25 @@ if compgen -G "$ROOT/initramfs/bin/*" >/dev/null; then
 fi
 
 compgen -G "$ROOT/initramfs/bin/*" | grep -qv 'README' || echo "    [WARN] initramfs/bin has no helpers (see initramfs/bin/README.md): modem services will be missing" >&2
+
+# Device camera profiles/calibrations (braun) & PipeWire speaker DSP config
+# Staged into /share inside initramfs and bind-mounted onto /newroot at boot.
+if compgen -G "$ROOT/initramfs/braun/sensors/*.toml" >/dev/null; then
+	mkdir -p "$TMP/share/braun/sensors"
+	cp "$ROOT"/initramfs/braun/sensors/*.toml "$TMP/share/braun/sensors/"
+	chmod 0644 "$TMP"/share/braun/sensors/*.toml
+fi
+if compgen -G "$ROOT/initramfs/braun/calibrations/*.toml" >/dev/null; then
+	mkdir -p "$TMP/share/braun/calibrations"
+	cp "$ROOT"/initramfs/braun/calibrations/*.toml "$TMP/share/braun/calibrations/"
+	chmod 0644 "$TMP"/share/braun/calibrations/*.toml
+fi
+if compgen -G "$ROOT/initramfs/pipewire/*.conf" >/dev/null; then
+	mkdir -p "$TMP/share/pipewire"
+	cp "$ROOT"/initramfs/pipewire/*.conf "$TMP/share/pipewire/"
+	chmod 0644 "$TMP"/share/pipewire/*.conf
+fi
+
 mkdir -p "$(dirname "$OUT")"
 if command -v xz >/dev/null; then
 	(cd "$TMP" && find . -print0 | cpio --null -o -H newc --owner=0:0 2>/dev/null | xz -9 --check=crc32 -c) > "$OUT"

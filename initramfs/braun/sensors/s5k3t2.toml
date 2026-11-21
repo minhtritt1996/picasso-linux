@@ -1,0 +1,5 @@
+# Samsung S5K3T2. Gain is code / 32, as in s5k3t2.c (32..512 -> 1x..16x).
+black = 64
+white = 1000
+analogue_gain = { m0 = 1, c0 = 0, m1 = 0, c1 = 32 }
+max_gain = 16
