@@ -28,10 +28,10 @@ index 7388957ae..057c0241c 100644
  dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
 diff --git a/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
 new file mode 100644
-index 000000000..a1d0f2cbc
+index 000000000..79b446669
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm7250-xiaomi-picasso.dts
-@@ -0,0 +1,1642 @@
+@@ -0,0 +1,1639 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Xiaomi Redmi K30 5G (picasso), Qualcomm SM7250.
@@ -585,13 +585,10 @@ index 000000000..a1d0f2cbc
 +		/* status line from the chip (the vendor's qca,bt-sw-ctrl-gpio) */
 +		swctrl-gpios = <&tlmm 73 GPIO_ACTIVE_HIGH>;
 +
-+		/* btqca sets HCI_QUIRK_USE_BDADDR_PROPERTY for wcn399x: without
-+		 * this property the controller stays HCI_UNCONFIGURED, hci_init_sync
-+		 * never runs and mgmt lists no index (btmgmt: "Index list with 0
-+		 * items"). The real address is provisioned at the factory and lives
-+		 * in the phone's persist partition; this locally administered one
-+		 * is the bring-up placeholder until it is read from there. */
-+		local-bd-address = [ 01 00 00 00 00 02 ];
++		/* btqca sets HCI_QUIRK_USE_BDADDR_PROPERTY for wcn399x when no
++		 * public address is fused in NVM: userspace (ExecStartPre on
++		 * bluetooth.service) reads the factory BD_ADDR from QMI DMS and
++		 * applies it via `btmgmt public-addr`. */
 +
 +		/* order matters: [0] is the NVM, [1] the patch (rampatch); the
 +		 * driver prefixes "qca/" itself */

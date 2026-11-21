@@ -2920,3 +2920,11 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `wpctl settings bluetooth.autoswitch-to-headset-profile` -> `Value: false`, `bluez_card.AC_BF_71_FB_E1_3A` active profile `a2dp-sink-sbc_xq`, no `bluez_input` loopback mic created.
    - `build/out/initrd.cpio.gz`: `bbb161f11443d4454a8485cf547ca45051b0443b2a333d5c5b1b69528b4205b0`
    - `build/out/boot-linux-auto.img`: `014b2650d5cc58581d179766b0851be27765dce1291444d1898028120e0064e3`
+
+7. **Factory Bluetooth MAC address via QMI DMS (`0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch`, `initramfs/init.c`)**:
+   - Removed the dummy `local-bd-address = [ 01 00 00 00 00 02 ]` placeholder from `sm7250-xiaomi-picasso.dts`.
+   - Added `/run/picasso-bt-mac.py` + `/run/systemd/system/bluetooth.service.d/90-picasso-bt-mac.conf` (`ExecStartPost`) to query QMI DMS (`0x005C`, `dev_type=1`) over QRTR and apply the factory BD_ADDR via `btmgmt --index 0 public-addr` (re-powering `hci0` after address update).
+   - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `bluetoothctl list` -> `Controller 9C:28:F7:71:E0:88 picasso [default]` (`btmgmt info` shows `addr 9C:28:F7:71:E0:88`).
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `47f7f59e04bca7d3b382e098d9692686283b4d2bb20d895836367f0a46b40e05`
+   - `build/out/initrd.cpio.gz`: `6d367a7b4e9a5464682017c4ff2481bed6fcf31586c3db8931a5b659f575bbe3`
+   - `build/out/boot-linux-auto.img`: `2a24875601cde6dd9e340e1ffb0746ccf5202e45536cf560bf6ae1cb352dc0ea`

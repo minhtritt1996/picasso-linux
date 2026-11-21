@@ -1492,7 +1492,64 @@ static void write_device_dropins(const char *newroot)
 		(void)!write_text(p, ucm_svc);
 		snprintf(link, sizeof(link), "%s/run/systemd/system/multi-user.target.wants/picasso-ucm2.service", newroot);
 		(void)!symlink("/run/systemd/system/picasso-ucm2.service", link);
-		klog("root: alsa-ucm2 + wireplumber drop-in written\n");
+
+		static const char bt_mac_py[] =
+			"import re, socket, struct, subprocess, time\n"
+			"def find_dms():\n"
+			"    r = subprocess.run(['qrtr-lookup'], capture_output=True, text=True)\n"
+			"    for line in r.stdout.splitlines():\n"
+			"        m = re.match(r'^\\s*2\\s+\\d+\\s+\\d+\\s+(\\d+)\\s+(\\d+)\\b', line)\n"
+			"        if m:\n"
+			"            return int(m.group(1)), int(m.group(2))\n"
+			"    return None\n"
+			"addr = None\n"
+			"for _ in range(30):\n"
+			"    addr = find_dms()\n"
+			"    if addr:\n"
+			"        break\n"
+			"    time.sleep(0.5)\n"
+			"if not addr:\n"
+			"    raise SystemExit('qrtr DMS not found')\n"
+			"s = socket.socket(42, socket.SOCK_DGRAM)\n"
+			"s.settimeout(3.0)\n"
+			"tlv = struct.pack('<BHI', 0x01, 4, 1)\n"
+			"s.sendto(struct.pack('<BHHH', 0x00, 1, 0x005C, len(tlv)) + tlv, addr)\n"
+			"resp, _ = s.recvfrom(4096)\n"
+			"off, mac = 7, None\n"
+			"while off + 3 <= len(resp):\n"
+			"    t, l = struct.unpack_from('<BH', resp, off)\n"
+			"    v = resp[off+3:off+3+l]\n"
+			"    if t == 0x10 and l >= 7 and v[0] == 6:\n"
+			"        mac = ':'.join(f'{b:02x}' for b in reversed(v[1:7]))\n"
+			"        break\n"
+			"    off += 3 + l\n"
+			"if not mac or mac == '00:00:00:00:00:00':\n"
+			"    raise SystemExit('invalid BT MAC from DMS')\n"
+			"for _ in range(20):\n"
+			"    info = subprocess.run(['btmgmt', '--index', '0', 'info'], capture_output=True, text=True)\n"
+			"    if 'Primary controller' in info.stdout:\n"
+			"        break\n"
+			"    time.sleep(0.5)\n"
+			"if mac.upper() in info.stdout:\n"
+			"    raise SystemExit(0)\n"
+			"subprocess.run(['btmgmt', '--index', '0', 'power', 'off'], capture_output=True)\n"
+			"subprocess.run(['btmgmt', '--index', '0', 'public-addr', mac], check=True)\n"
+			"for _ in range(20):\n"
+			"    info = subprocess.run(['btmgmt', '--index', '0', 'info'], capture_output=True, text=True)\n"
+			"    if mac.upper() in info.stdout:\n"
+			"        break\n"
+			"    time.sleep(0.5)\n"
+			"subprocess.run(['btmgmt', '--index', '0', 'power', 'on'], capture_output=True)\n";
+		static const char bt_dropin[] =
+			"[Service]\n"
+			"ExecStartPost=-/usr/bin/python3 /run/picasso-bt-mac.py\n";
+		snprintf(p, sizeof(p), "%s/run/picasso-bt-mac.py", newroot);
+		(void)!write_text(p, bt_mac_py);
+		snprintf(p, sizeof(p), "%s/run/systemd/system/bluetooth.service.d", newroot);
+		mkdir_parents(p);
+		snprintf(p, sizeof(p), "%s/run/systemd/system/bluetooth.service.d/90-picasso-bt-mac.conf", newroot);
+		(void)!write_text(p, bt_dropin);
+		klog("root: alsa-ucm2 + wireplumber + bt-mac drop-in written\n");
 	}
 
 	/* 45-minute safety watchdog timer inside Denial (skip when auto_reboot=0) */
