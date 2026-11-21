@@ -2943,3 +2943,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - Verified on live hardware after reboot (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): both `picasso-gnss` and `picasso-dmail-loc` are `active`, and `su -s /bin/sh picasso` successfully calls `org.dmail.Location1` `Start`/`Introspect`/`Stop`.
    - `build/out/initrd.cpio.gz`: `d0eb92ad8e5d7201df4526ea0044cd93536c26f78b6010b194f9eac7f41a1a97`
    - `build/out/boot-linux-auto.img`: `79ef58955ea02007861bca6f490dd6767649924ac1364e393b0324dea1b03892`
+
+10. **PM7250B `-220 mA` ADC termination threshold (`0016-power-supply-qcom-pm7250b-add-qg-battery.patch`)**:
+    - Configured `CHGR_ADC_ITERM_UP_THD_MSB/LSB` (`0x67`/`0x68`) to `0xfd30` (`-220 mA`, matching downstream `picasso-sm7250.dtsi` `qcom,chg-term-current-ma = <(-220)>`) instead of leaving the bootloader default (`0xfeb9` = `-100 mA`), which kept the charger stuck in `CHGR_TAPER` at `100%` (`~-105 mA`) while awake.
+    - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `1067=fd`, `1068=30`, `1006=45` (`CHGR_TERMINATE`), `status=Full`, `capacity=100`, `voltage_now=4388285`, `current_now=-1525`.
+    - `build/out/Image`: `fadab4667e10bae9772cfe9081d381e468844be84d2ebfde26503f6a2f42a0d3`
+    - `build/out/boot-linux-auto.img`: `d38529c6e2efeb434726b1c29584d7fa529bed067a925cf5d438156aaed0a683`

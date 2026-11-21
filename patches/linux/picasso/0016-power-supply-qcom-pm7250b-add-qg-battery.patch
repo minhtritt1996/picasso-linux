@@ -1,16 +1,21 @@
 diff --git a/drivers/power/supply/qcom_pm7250b_charger.c b/drivers/power/supply/qcom_pm7250b_charger.c
-index 480aa56f9..e6b71bfff 100644
+index 480aa56f9..94f5378d4 100644
 --- a/drivers/power/supply/qcom_pm7250b_charger.c
 +++ b/drivers/power/supply/qcom_pm7250b_charger.c
-@@ -44,6 +44,7 @@
+@@ -44,6 +44,12 @@
  #define CHGR_CFG2			0x51
  #define  CHG_EN_SRC_BIT			BIT(7)
  #define  CHG_EN_POLARITY_BIT		BIT(6)
 +#define CHGR_FAST_CHARGE_CURRENT_CFG	0x61
++#define CHGR_ADC_ITERM_UP_THD_MSB	0x67
++#define CHGR_ADC_ITERM_UP_THD_LSB	0x68
++/* (-220 mA * 32767) / 10000 = -720 (0xfd30), matching picasso-sm7250.dtsi */
++#define PM7250B_ITERM_220MA_MSB		0xfd
++#define PM7250B_ITERM_220MA_LSB		0x30
  
  /* DCDC_BASE = CHGR_BASE + 0x100 */
  #define POWER_PATH_STATUS		0x10b
-@@ -51,8 +52,28 @@
+@@ -51,8 +57,28 @@
  #define  VALID_INPUT_POWER_SRC_BIT	BIT(0)
  
  /* USBIN_BASE = CHGR_BASE + 0x300 */
@@ -39,7 +44,7 @@ index 480aa56f9..e6b71bfff 100644
  
  #define CHG_LIMIT_POLL_MS		20000
  #define CHG_LIMIT_AUTO_HYST		5	/* resume this far below the end threshold */
-@@ -61,6 +82,7 @@ struct pm7250b_chg {
+@@ -61,6 +87,7 @@ struct pm7250b_chg {
  	struct device *dev;
  	struct regmap *regmap;
  	struct power_supply *psy;
@@ -47,7 +52,7 @@ index 480aa56f9..e6b71bfff 100644
  	struct power_supply *gauge;	/* optional, for the charge limit */
  	struct delayed_work limit_work;
  	struct mutex lock;	/* protects the fields below and the enable bit */
-@@ -107,9 +129,7 @@ static int pm7250b_chg_status(struct pm7250b_chg *chg, int *status)
+@@ -107,9 +134,7 @@ static int pm7250b_chg_status(struct pm7250b_chg *chg, int *status)
  	stat = FIELD_GET(CHGR_STATUS_MASK, stat);
  
  	if (!online) {
@@ -58,7 +63,7 @@ index 480aa56f9..e6b71bfff 100644
  		return 0;
  	}
  
-@@ -240,13 +260,43 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
+@@ -240,13 +265,49 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
  	}
  }
  
@@ -97,13 +102,19 @@ index 480aa56f9..e6b71bfff 100644
  
  	mutex_lock(&chg->lock);
 -	pm7250b_chg_limit_eval(chg);
++	if (chg->sw_ctrl) {
++		regmap_write(chg->regmap, chg->base + CHGR_ADC_ITERM_UP_THD_MSB,
++			     PM7250B_ITERM_220MA_MSB);
++		regmap_write(chg->regmap, chg->base + CHGR_ADC_ITERM_UP_THD_LSB,
++			     PM7250B_ITERM_220MA_LSB);
++	}
 +	pm7250b_chg_tune_fast_charge(chg);
 +	if (chg->gauge)
 +		pm7250b_chg_limit_eval(chg);
  	mutex_unlock(&chg->lock);
  
  	schedule_delayed_work(&chg->limit_work,
-@@ -372,6 +422,213 @@ static const struct power_supply_desc pm7250b_chg_desc = {
+@@ -372,6 +433,213 @@ static const struct power_supply_desc pm7250b_chg_desc = {
  	.property_is_writeable = pm7250b_chg_writeable,
  };
  
@@ -317,7 +328,7 @@ index 480aa56f9..e6b71bfff 100644
  static int pm7250b_chg_probe(struct platform_device *pdev)
  {
  	struct power_supply_config cfg = {};
-@@ -438,9 +695,14 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
+@@ -438,9 +706,20 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, PTR_ERR(chg->psy),
  				     "failed to register power supply\n");
  
@@ -329,6 +340,12 @@ index 480aa56f9..e6b71bfff 100644
 +		dev_warn(dev, "failed to register battery supply: %pe\n",
 +			 chg->bat_psy);
 +
++	if (chg->sw_ctrl) {
++		regmap_write(chg->regmap, chg->base + CHGR_ADC_ITERM_UP_THD_MSB,
++			     PM7250B_ITERM_220MA_MSB);
++		regmap_write(chg->regmap, chg->base + CHGR_ADC_ITERM_UP_THD_LSB,
++			     PM7250B_ITERM_220MA_LSB);
++	}
 +	pm7250b_chg_tune_fast_charge(chg);
 +	schedule_delayed_work(&chg->limit_work,
 +			      msecs_to_jiffies(CHG_LIMIT_POLL_MS));
