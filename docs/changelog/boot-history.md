@@ -2928,3 +2928,11 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `build/out/sm7250-xiaomi-picasso.dtb`: `47f7f59e04bca7d3b382e098d9692686283b4d2bb20d895836367f0a46b40e05`
    - `build/out/initrd.cpio.gz`: `6d367a7b4e9a5464682017c4ff2481bed6fcf31586c3db8931a5b659f575bbe3`
    - `build/out/boot-linux-auto.img`: `2a24875601cde6dd9e340e1ffb0746ccf5202e45536cf560bf6ae1cb352dc0ea`
+
+8. **PM8150L rear flash/torch LED (`0002-arm64-dts-qcom-add-sm7250-xiaomi-picasso.patch`, `configs/linux/picasso.config`)**:
+   - Enabled `CONFIG_LEDS_CLASS_FLASH=y`, `CONFIG_LEDS_QCOM_FLASH=y`, `CONFIG_V4L2_FLASH_LED_CLASS=y`.
+   - Enabled `&pm8150l_flash` (`led-controller@d300`) with ganged `led-sources = <1>, <2>` (`led-max-microamp = <300000>`, `flash-max-microamp = <1500000>`, `flash-max-timeout-us = <1280000>`).
+   - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `/sys/class/leds/white:flash` (`max_brightness=255`, `flash_strobe=0`) enumerated cleanly and `echo 50 > brightness` toggled torch (`torch_test=OK`, zero kernel errors).
+   - `build/out/Image`: `56d0301f8fdbb559d256fffb5bb57c6c87baaefdcaa2e5a03b8650169c8ce22e`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `79a4344fd46642ed0db1b553820337d88e1dcb730c6b540f38c8c2c8ffa2cc34`
+   - `build/out/boot-linux-auto.img`: `304ac5dcc4971d6429970210c79517da1143829eeafb66c5306c4822934c8348`
