@@ -2906,3 +2906,11 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - Verified on hardware (`Loa Bose của Trí`, `AC:BF:71:FB:E1:3A`): `softVolumes=[0.274625, 0.274625]` at `65%`.
    - `build/out/initrd.cpio.gz`: `22cf5c57fcdd6f7ef26e16b85a39a60a58c05389ae092e1deebe621934bfc49c`
    - `build/out/boot-linux-auto.img`: `31f0be48ecca8731b7c6d1135b70b75b36ed9d6453442d00bba196a1e7c80035`
+
+
+5. **Bluetooth AVRCP `/dev/uinput` support (`configs/linux/picasso.config`)**:
+   - Enabled `CONFIG_INPUT_UINPUT=y` so `bluetoothd` `avctp.c:init_uinput()` creates `/dev/uinput` and registers the AVRCP virtual input device (`Loa Bose của Trí (AVRCP)` in `/proc/bus/input/devices`) without `No such file or directory`.
+   - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `/dev/uinput` (`10, 223`) present, `Loa Bose của Trí (AVRCP)` registered, zero `init_uinput()` errors. Note: `AC:BF:71:FB:E1:3A` still reports `org.bluez.MediaControl1.Connected=false` and `transport.c:set_volume() -107` while streaming, so `bluez5.enable-hw-volume = false` remains active for PipeWire `softVolumes` control.
+   - `build/out/Image`: `a1c0c2b3298ae1ee0ecd5db5df85ec175ee5572bd136d36fd94d94a3f5e0b790`
+   - `build/out/initrd.cpio.gz`: `23fced52515b316d526141ddf218dfe2bee157fcc9552101202263426fad9a01`
+   - `build/out/boot-linux-auto.img`: `8ecafa6d15feb8205265352b4c64d52a4fc7741426e23e50786297829f636073`
