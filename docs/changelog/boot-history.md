@@ -2846,9 +2846,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - **Root cause**: Zeroing PDAF `dt=0x30` registers (`0x30d8`, `0x3092`, `0x4324`, `0x4325`) while leaving `0x30d9 = 0x00` caused IMX686 modes 1 and 2 to output half-height (`1736/3472`, `1300/2600`) 4×4 Quad-Bayer frames. Additionally, Sony color bars (`test_pattern=2`) and real-scene channel ratios proved the sensor outputs `MEDIA_BUS_FMT_SRGGB10_1X10` rather than `MEDIA_BUS_FMT_SBGGR10_1X10`.
    - **Fix**: Set `{ CCI_REG8(0x30d9), 0x01 }` in `imx686_mode_1_4624x3472_30fps_regs` and `imx686_mode_2_4624x2600_60fps_regs`, and switched `imx686.c` format/enum codes to `MEDIA_BUS_FMT_SRGGB10_1X10`.
 
-2. **DW9800W VCM Hardware Autofocus (`0002*`, `configs/linux/picasso.config`)**:
-   - Enabled `CONFIG_VIDEO_DW9807_VCM=y` and added `vcm_wide: lens@c` (`dongwoon,dw9807-vcm`) on `&cci0_i2c1` with `lens-focus = <&vcm_wide>` on `camera@1a` (`imx686`).
-   - Live capture via `braunctl shot imx686` moved `dw9807 4-000c` `focus_absolute` (`0` -> `322`), producing a full `3472x4624` (`4.8 MiB`) portrait JPEG with accurate colors and white balance.
+2. **DW9800W VCM Hardware Autofocus & Portrait Orientation (`0002*`, `configs/linux/picasso.config`)**:
+   - Enabled `CONFIG_VIDEO_DW9807_VCM=y` and added `vcm_wide: lens@c` (`dongwoon,dw9807-vcm`) on `&cci0_i2c1` with `lens-focus = <&vcm_wide>` and `rotation = <270>` on `camera@1a` (`imx686`, `turned 90 clockwise` in `braun`).
+   - Live capture via `braunctl shot imx686` moved `dw9807 4-000c` `focus_absolute` (`0` -> `322`), producing a full `3472x4624` portrait JPEG with upright orientation and accurate colors/WB.
 
 3. **Boot-Packaged `braun` Calibrations & PipeWire Speaker DSP (`initramfs/`, `scripts/mkinitramfs.sh`)**:
    - Packaged Chromatix7 AWB Planckian `locus`, per-CCT `ccm`, and `shading` tables (`initramfs/braun/calibrations/{imx686,ov8856,s5k3t2}.toml`, with DW9800W EEPROM travel `[300, 860]`, start `420`) plus sensor gain profiles (`initramfs/braun/sensors/*.toml`).
@@ -2860,5 +2860,5 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `scripts/preflight.sh`: `preflight: OK` (`policy-scan: OK`).
    - `build/out/Image`: `5f89f5a489c1abd3ce40a5f138f74fdbb972b31c733cdb8ec65bedabe31e5b71`
    - `build/out/initrd.cpio.gz`: `8ec88e57ef139eaf985c42c3886cc6ce07c13f572a4925a23d0de4740315096c`
-   - `build/out/sm7250-xiaomi-picasso.dtb`: `cd8aba6d59a43751252f02b5f1da928bb7a4e447960c068fc407bfb50448c696`
-   - `build/out/boot-linux-auto.img`: `f148746ba67a02b2cf3993a434320129c4c45c7c8910d60a40f9c0fcdee599ee`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `ab4c3c55116bc55344bf46029bf12db34158108a782d1e11bf1568fada010117`
+   - `build/out/boot-linux-auto.img`: `9766cbc6bbfbcceef0a689f0ca4c23aaf81806f88b1fe61752b713d059438ced`
