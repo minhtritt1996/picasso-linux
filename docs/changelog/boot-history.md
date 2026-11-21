@@ -2936,3 +2936,10 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `build/out/Image`: `56d0301f8fdbb559d256fffb5bb57c6c87baaefdcaa2e5a03b8650169c8ce22e`
    - `build/out/sm7250-xiaomi-picasso.dtb`: `79a4344fd46642ed0db1b553820337d88e1dcb730c6b540f38c8c2c8ffa2cc34`
    - `build/out/boot-linux-auto.img`: `304ac5dcc4971d6429970210c79517da1143829eeafb66c5306c4822934c8348`
+
+9. **`org.dmail.Location1` D-Bus bridge for Droidloom (`initramfs/init.c`)**:
+   - Tested stock `dmail` with a `/usr/lib/modules/<kver>/dmail/device.toml`; on SM7250's modem firmware `dmail` fails QMI LOC (`malformed QMI message: engine lock`, `QMI error 0x0030`).
+   - Added `/run/picasso-dmail-loc.py` + `/run/systemd/system/picasso-dmail-loc.service` (pure-Python stdlib D-Bus server, zero `userdata` writes) publishing `org.dmail.Location1` at `/org/dmail` from `/run/gnss.status` (backed by `picasso-gnss.service`).
+   - Verified on live hardware after reboot (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): both `picasso-gnss` and `picasso-dmail-loc` are `active`, and `su -s /bin/sh picasso` successfully calls `org.dmail.Location1` `Start`/`Introspect`/`Stop`.
+   - `build/out/initrd.cpio.gz`: `d0eb92ad8e5d7201df4526ea0044cd93536c26f78b6010b194f9eac7f41a1a97`
+   - `build/out/boot-linux-auto.img`: `79ef58955ea02007861bca6f490dd6767649924ac1364e393b0324dea1b03892`
