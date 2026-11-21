@@ -1574,6 +1574,28 @@ static void write_device_dropins(const char *newroot)
 		}
 	}
 
+	/* systemd-sleep hook: stop/restart hexagonrpcd across s2idle */
+	{
+		char dst[128], run_dir[128], p[256];
+
+		snprintf(dst, sizeof(dst), "%.96s/usr/lib/systemd/system-sleep", newroot);
+		if (access(dst, F_OK) == 0 && access("/share/systemd", F_OK) == 0) {
+			snprintf(run_dir, sizeof(run_dir), "%.96s/run/picasso-sleep", newroot);
+			(void)!copy_dir_files(dst, run_dir, 0755);
+			if (copy_dir_files("/share/systemd", run_dir, 0755) == 0 &&
+			    mount(run_dir, dst, NULL, MS_BIND, NULL) == 0)
+				klog("root: systemd-sleep hook bound\n");
+			else
+				klog("root: systemd-sleep hook failed: %s\n", strerror(errno));
+		}
+
+		/* Override 70-phone-no-sleep.conf in /run on this experimental branch */
+		snprintf(p, sizeof(p), "%.96s/run/systemd/sleep.conf.d", newroot);
+		mkdir_parents(p);
+		snprintf(p, sizeof(p), "%.96s/run/systemd/sleep.conf.d/99-picasso-sleep.conf", newroot);
+		(void)!write_text(p, "[Sleep]\nAllowSuspend=yes\nMemorySleepMode=s2idle\n");
+	}
+
 	/* Camera calibrations (braun): /usr/lib/modules/<uname -r>/braun */
 	{
 		struct utsname uts;

@@ -95,6 +95,11 @@ if compgen -G "$ROOT/initramfs/pipewire/*.conf" >/dev/null; then
 	cp "$ROOT"/initramfs/pipewire/*.conf "$TMP/share/pipewire/"
 	chmod 0644 "$TMP"/share/pipewire/*.conf
 fi
+if compgen -G "$ROOT/initramfs/systemd/*" >/dev/null; then
+	mkdir -p "$TMP/share/systemd"
+	cp "$ROOT"/initramfs/systemd/* "$TMP/share/systemd/"
+	chmod 0755 "$TMP"/share/systemd/*
+fi
 
 mkdir -p "$(dirname "$OUT")"
 if command -v xz >/dev/null; then

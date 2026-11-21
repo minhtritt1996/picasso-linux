@@ -2882,3 +2882,21 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `build/out/Image`: `23643ed64c3672254ba5edd12a68983d6ece0c193778308958b17107c8cd0802`
    - `build/out/sm7250-xiaomi-picasso.dtb`: `ab4c3c55116bc55344bf46029bf12db34158108a782d1e11bf1568fada010117`
    - `build/out/boot-linux-auto.img`: `cfc8578624aaab58b984c798180395914909900c558ae5ddb6cd25a634be11d6`
+
+### 34. Experimental `s2idle` Suspend via `hexagonrpcd` `systemd-sleep` Hook (`exp/s2idle-suspend`, 2026-11-21)
+
+Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cdc12-dirty #6 SMP PREEMPT Sat Nov 21 09:45:51 +07 2026 aarch64`):
+
+1. **Root cause of `s2idle` crash/reboot**:
+   - Capturing early console via temporary `ramoops@f3e80000` during `pm_test=devices` isolated the crash to `3000000.remoteproc` (ADSP `sensor_process` `frpc_dsp` hosted by `hexagonrpcd`) faulting right on resume (`err_qdi.c:1045:EX:sensor_process:0x1:frpc_dsp:0xd6`) and triggering an ADSP recovery reset.
+   - Stopping `hexagonrpcd.service` before entering `s2idle` allowed clean suspend and RTC wakeup (`rtc1`) with zero faults.
+   - `userdata` also disables suspend via `/usr/lib/systemd/sleep.conf.d/70-phone-no-sleep.conf` (`AllowSuspend=no`).
+
+2. **Boot-packaged fix (`initramfs/systemd/picasso-hexagonrpcd`, `scripts/mkinitramfs.sh`, `initramfs/init.c`)**:
+   - Packaged `initramfs/systemd/picasso-hexagonrpcd` and bind-mounted `/usr/lib/systemd/system-sleep` over tmpfs `/run/picasso-sleep` (preserving `denial-suspend-mode`) to stop `hexagonrpcd.service` on `pre` and restart it (`--no-block`) on `post`.
+   - Wrote `/run/systemd/sleep.conf.d/99-picasso-sleep.conf` (`AllowSuspend=yes`, `MemorySleepMode=s2idle`) in tmpfs (zero `userdata` writes).
+
+3. **Live Verification**:
+   - `systemctl suspend` with `rtcwake -d rtc1 -m no -s 7`: `suspend_stats/success=1`, `fail=0`, `PM: suspend entry (s2idle)` -> `PM: suspend exit`, `picasso-nvt-vendor` SRAM firmware reloaded (`fw info: ver 0x0a`), `hexagonrpcd` active again, Wi-Fi `5G` (`5240 MHz`) reconnected.
+   - `build/out/initrd.cpio.gz`: `39264e4211be364dd2f8d682afd6cbe143213b324f57671e86d2b53bc3543f32`
+   - `build/out/boot-linux-auto.img`: `40bd5341254d6e21d2089d2e02f9cce8a2927c3eaf274fb3a744f8f53123a326`

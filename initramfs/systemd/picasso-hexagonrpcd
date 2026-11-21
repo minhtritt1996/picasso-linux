@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stop hexagonrpcd before s2idle so ADSP sensor_process closes cleanly
+# instead of faulting on resume, then restart it after wake.
+case "${1:-}" in
+pre)
+	systemctl stop hexagonrpcd.service 2>/dev/null || true
+	;;
+post)
+	systemctl start --no-block hexagonrpcd.service 2>/dev/null || true
+	;;
+esac
