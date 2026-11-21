@@ -420,6 +420,17 @@ export_patches() {
 		rm -f "$t"
 		echo "    (no sensor driver delta to export)"
 	fi
+	local pvib="picasso/0026-input-pm8xxx-vibrator-pm7250b-range.patch"
+	echo "==> Exporting $pvib"
+	t=$(mktemp)
+	git -C "$WS" diff HEAD -- drivers/input/misc/pm8xxx-vibrator.c > "$t"
+	if [ -s "$t" ]; then
+		mv "$t" "$PATCHES/$pvib"
+		grep -qxF "$pvib" "$PATCHES/series" || echo "$pvib" >> "$PATCHES/series"
+	else
+		rm -f "$t"
+		echo "    (no pm8xxx-vibrator delta to export)"
+	fi
 	local pt="picasso/0011-input-picasso-nvt-sram-firmware.patch"
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-spi.c
 	git -C "$WS" add -N drivers/input/touchscreen/picasso-nvt-vendor.c

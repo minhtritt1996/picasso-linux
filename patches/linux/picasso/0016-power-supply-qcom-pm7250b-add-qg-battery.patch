@@ -1,5 +1,5 @@
 diff --git a/drivers/power/supply/qcom_pm7250b_charger.c b/drivers/power/supply/qcom_pm7250b_charger.c
-index 480aa56f9..753ef5370 100644
+index 480aa56f9..e6b71bfff 100644
 --- a/drivers/power/supply/qcom_pm7250b_charger.c
 +++ b/drivers/power/supply/qcom_pm7250b_charger.c
 @@ -44,6 +44,7 @@
@@ -47,7 +47,18 @@ index 480aa56f9..753ef5370 100644
  	struct power_supply *gauge;	/* optional, for the charge limit */
  	struct delayed_work limit_work;
  	struct mutex lock;	/* protects the fields below and the enable bit */
-@@ -240,13 +262,43 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
+@@ -107,9 +129,7 @@ static int pm7250b_chg_status(struct pm7250b_chg *chg, int *status)
+ 	stat = FIELD_GET(CHGR_STATUS_MASK, stat);
+ 
+ 	if (!online) {
+-		*status = (stat == CHGR_TERMINATE || stat == CHGR_INHIBIT) ?
+-			  POWER_SUPPLY_STATUS_FULL :
+-			  POWER_SUPPLY_STATUS_DISCHARGING;
++		*status = POWER_SUPPLY_STATUS_DISCHARGING;
+ 		return 0;
+ 	}
+ 
+@@ -240,13 +260,43 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
  	}
  }
  
@@ -92,7 +103,7 @@ index 480aa56f9..753ef5370 100644
  	mutex_unlock(&chg->lock);
  
  	schedule_delayed_work(&chg->limit_work,
-@@ -372,6 +424,184 @@ static const struct power_supply_desc pm7250b_chg_desc = {
+@@ -372,6 +422,213 @@ static const struct power_supply_desc pm7250b_chg_desc = {
  	.property_is_writeable = pm7250b_chg_writeable,
  };
  
@@ -156,19 +167,48 @@ index 480aa56f9..753ef5370 100644
 +	return pm7250b_bat_read_uv(chg, QG_S7_PON_OCV_V_DATA0_REG, uv);
 +}
 +
++/*
++ * Estimate open-circuit voltage by compensating for ~90 mOhm battery internal
++ * resistance (current_now is positive during discharge, negative when charging).
++ */
++static int pm7250b_bat_ocv_uv(struct pm7250b_chg *chg, int *ocv_uv)
++{
++	int ret, uv, ua;
++
++	ret = pm7250b_bat_vbat_uv(chg, &uv);
++	if (ret)
++		return ret;
++
++	if (!pm7250b_bat_current_ua(chg, &ua))
++		uv += div_s64((s64)ua * 90LL, 1000);
++
++	*ocv_uv = uv;
++	return 0;
++}
++
++/* 25C OCV-SoC LUT from Xiaomi picasso G7ANVTBM4P 4500mAh batterydata */
 +static int pm7250b_bat_capacity(int uv, int status)
 +{
 +	static const struct {
 +		int mv;
 +		int pct;
 +	} curve[] = {
-+		{ 4400, 100 },
-+		{ 4200,  85 },
-+		{ 4000,  65 },
-+		{ 3850,  45 },
-+		{ 3750,  25 },
-+		{ 3650,  10 },
-+		{ 3400,   0 },
++		{ 4382, 100 },
++		{ 4339,  96 },
++		{ 4269,  90 },
++		{ 4198,  84 },
++		{ 4154,  80 },
++		{ 4052,  70 },
++		{ 3965,  60 },
++		{ 3873,  50 },
++		{ 3824,  40 },
++		{ 3782,  30 },
++		{ 3717,  20 },
++		{ 3676,  10 },
++		{ 3575,   6 },
++		{ 3496,   4 },
++		{ 3374,   2 },
++		{ 3000,   0 },
 +	};
 +	int mv = uv / 1000;
 +	int i;
@@ -231,7 +271,7 @@ index 480aa56f9..753ef5370 100644
 +		ret = pm7250b_chg_status(chg, &status);
 +		if (ret)
 +			return ret;
-+		ret = pm7250b_bat_vbat_uv(chg, &uv);
++		ret = pm7250b_bat_ocv_uv(chg, &uv);
 +		if (ret)
 +			return ret;
 +		val->intval = pm7250b_bat_capacity(uv, status);
@@ -240,7 +280,7 @@ index 480aa56f9..753ef5370 100644
 +		ret = pm7250b_chg_status(chg, &status);
 +		if (ret)
 +			return ret;
-+		ret = pm7250b_bat_vbat_uv(chg, &uv);
++		ret = pm7250b_bat_ocv_uv(chg, &uv);
 +		if (ret)
 +			return ret;
 +		val->intval = pm7250b_bat_capacity(uv, status) * 45000;
@@ -277,7 +317,7 @@ index 480aa56f9..753ef5370 100644
  static int pm7250b_chg_probe(struct platform_device *pdev)
  {
  	struct power_supply_config cfg = {};
-@@ -438,9 +668,14 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
+@@ -438,9 +695,14 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, PTR_ERR(chg->psy),
  				     "failed to register power supply\n");
  

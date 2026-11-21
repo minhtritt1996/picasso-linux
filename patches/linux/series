@@ -40,3 +40,4 @@ picasso/0022-pinctrl-sm7250-egpio-ownership.patch
 picasso/0023-clk-qcom-camcc-sm7250-pll2-v2.patch
 picasso/0024-media-qcom-camss-add-sm7250-cphy.patch
 picasso/0025-media-i2c-add-imx686-s5k3t2-drivers.patch
+picasso/0026-input-pm8xxx-vibrator-pm7250b-range.patch

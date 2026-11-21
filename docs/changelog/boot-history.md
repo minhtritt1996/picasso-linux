@@ -2862,3 +2862,23 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `build/out/initrd.cpio.gz`: `8ec88e57ef139eaf985c42c3886cc6ce07c13f572a4925a23d0de4740315096c`
    - `build/out/sm7250-xiaomi-picasso.dtb`: `ab4c3c55116bc55344bf46029bf12db34158108a782d1e11bf1568fada010117`
    - `build/out/boot-linux-auto.img`: `9766cbc6bbfbcceef0a689f0ca4c23aaf81806f88b1fe61752b713d059438ced`
+
+### 33. Battery OCV Compensation & PM7250B Haptic Range — VERIFIED on live hardware (2026-11-21)
+
+Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cdc12-dirty #6 SMP PREEMPT Sat Nov 21 09:45:51 +07 2026 aarch64`):
+
+1. **Battery SoC accuracy (`0016-power-supply-qcom-pm7250b-add-qg-battery.patch`)**:
+   - Fixed `pm7250b_chg_status()` returning `POWER_SUPPLY_STATUS_FULL` while `!online`, which pinned capacity to `100%` right after unplugging.
+   - Added ~90 mΩ internal-resistance compensation (`pm7250b_bat_ocv_uv()`) and replaced the coarse voltage table with the 25°C OCV-SoC curve from downstream `G7ANVTBM4P_4500mah` batterydata.
+   - Verified live: `status=Discharging`, `voltage_now=4108592`, `current_now=299988`, `capacity=78`, `charge_now=3510000`.
+
+2. **Stronger touch haptics (`0026-input-pm8xxx-vibrator-pm7250b-range.patch`, `build.sh`, `patches/linux/series`)**:
+   - Scaled `qcom,pm7250b-vib` to `2504..3200 mV` (8 mV steps) in `drivers/input/misc/pm8xxx-vibrator.c` so light `ff-memless` touch effects no longer drop down to `~1.5–1.8 V`.
+   - Verified `/dev/input/event0` (`pm8xxx_vib_ffmemless`) `FF_RUMBLE` ioctl on live hardware.
+
+3. **Gates & Artifact SHA-256**:
+   - `./build.sh check`: `[OK] 40 patches applied`, `dtbs_check: 12 schema diagnostics from the vendor series`.
+   - `scripts/preflight.sh`: `preflight: OK`.
+   - `build/out/Image`: `23643ed64c3672254ba5edd12a68983d6ece0c193778308958b17107c8cd0802`
+   - `build/out/sm7250-xiaomi-picasso.dtb`: `ab4c3c55116bc55344bf46029bf12db34158108a782d1e11bf1568fada010117`
+   - `build/out/boot-linux-auto.img`: `cfc8578624aaab58b984c798180395914909900c558ae5ddb6cd25a634be11d6`

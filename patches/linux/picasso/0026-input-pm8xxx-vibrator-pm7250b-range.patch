@@ -1,0 +1,45 @@
+diff --git a/drivers/input/misc/pm8xxx-vibrator.c b/drivers/input/misc/pm8xxx-vibrator.c
+index 381b06473..25b80e083 100644
+--- a/drivers/input/misc/pm8xxx-vibrator.c
++++ b/drivers/input/misc/pm8xxx-vibrator.c
+@@ -88,6 +88,8 @@ struct pm8xxx_vib {
+ 	unsigned int drv2_addr;
+ 	int speed;
+ 	int level;
++	int min_mv;
++	int max_mv;
+ 	bool active;
+ 	u8  reg_vib_drv;
+ };
+@@ -151,12 +153,14 @@ static void pm8xxx_work_handler(struct work_struct *work)
+ 	 * scale the level to fit into these ranges.
+ 	 */
+ 	if (vib->speed) {
++		int levels = vib->max_mv - vib->min_mv + VIB_PER_STEP_mV(vib);
++
+ 		vib->active = true;
+-		vib->level = VIB_MIN_LEVEL_mV(vib);
+-		vib->level += mult_frac(VIB_MAX_LEVELS(vib), vib->speed, MAX_FF_SPEED);
++		vib->level = vib->min_mv;
++		vib->level += mult_frac(levels, vib->speed, MAX_FF_SPEED);
+ 	} else {
+ 		vib->active = false;
+-		vib->level = VIB_MIN_LEVEL_mV(vib);
++		vib->level = vib->min_mv;
+ 	}
+ 
+ 	pm8xxx_vib_set(vib, vib->active);
+@@ -243,6 +247,13 @@ static int pm8xxx_vib_probe(struct platform_device *pdev)
+ 
+ 	vib->regs = regs;
+ 	vib->reg_vib_drv = val;
++	if (of_device_is_compatible(pdev->dev.of_node, "qcom,pm7250b-vib")) {
++		vib->min_mv = 2504;
++		vib->max_mv = 3200;
++	} else {
++		vib->min_mv = VIB_MIN_LEVEL_mV(vib);
++		vib->max_mv = VIB_MAX_LEVEL_mV(vib);
++	}
+ 
+ 	input_dev->name = "pm8xxx_vib_ffmemless";
+ 	input_dev->id.version = 1;
