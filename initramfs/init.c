@@ -1373,6 +1373,9 @@ static void write_device_dropins(const char *newroot)
 			"  }\n"
 			"]\n";
 		static const char wp_bluez[] =
+			"wireplumber.settings = {\n"
+			"  bluetooth.autoswitch-to-headset-profile = false\n"
+			"}\n"
 			"monitor.bluez.properties = {\n"
 			"  bluez5.enable-hw-volume = false\n"
 			"  bluez5.enable-sbc-xq = true\n"

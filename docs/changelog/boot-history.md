@@ -2914,3 +2914,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `build/out/Image`: `a1c0c2b3298ae1ee0ecd5db5df85ec175ee5572bd136d36fd94d94a3f5e0b790`
    - `build/out/initrd.cpio.gz`: `23fced52515b316d526141ddf218dfe2bee157fcc9552101202263426fad9a01`
    - `build/out/boot-linux-auto.img`: `8ecafa6d15feb8205265352b4c64d52a4fc7741426e23e50786297829f636073`
+
+6. **Prevent Bluetooth A2DP from auto-switching to 8 kHz mono HFP (`initramfs/init.c`)**:
+   - Added `wireplumber.settings = { bluetooth.autoswitch-to-headset-profile = false }` in `/run/wireplumber/wireplumber.conf.d/51-picasso-bluez.conf` so apps opening a microphone (e.g. Chromium) use the internal mic instead of forcing Bluetooth speakers into `headset-head-unit` (8 kHz mono CVSD).
+   - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `wpctl settings bluetooth.autoswitch-to-headset-profile` -> `Value: false`, `bluez_card.AC_BF_71_FB_E1_3A` active profile `a2dp-sink-sbc_xq`, no `bluez_input` loopback mic created.
+   - `build/out/initrd.cpio.gz`: `bbb161f11443d4454a8485cf547ca45051b0443b2a333d5c5b1b69528b4205b0`
+   - `build/out/boot-linux-auto.img`: `014b2650d5cc58581d179766b0851be27765dce1291444d1898028120e0064e3`
