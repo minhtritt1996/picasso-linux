@@ -1372,6 +1372,12 @@ static void write_device_dropins(const char *newroot)
 			"    }\n"
 			"  }\n"
 			"]\n";
+		static const char wp_bluez[] =
+			"monitor.bluez.properties = {\n"
+			"  bluez5.enable-hw-volume = false\n"
+			"  bluez5.enable-sbc-xq = true\n"
+			"  bluez5.codecs = [ sbc_xq aac aptx aptx_hd ldac sbc ]\n"
+			"}\n";
 		static const char ucm_hifi[] =
 			"SectionVerb {\n"
 			"\tEnableSequence [\n"
@@ -1450,6 +1456,8 @@ static void write_device_dropins(const char *newroot)
 		mkdir_parents(p);
 		snprintf(p, sizeof(p), "%s/run/wireplumber/wireplumber.conf.d/50-picasso-alsa.conf", newroot);
 		(void)!write_text(p, wp_alsa);
+		snprintf(p, sizeof(p), "%s/run/wireplumber/wireplumber.conf.d/51-picasso-bluez.conf", newroot);
+		(void)!write_text(p, wp_bluez);
 
 		snprintf(p, sizeof(p), "%s/home/picasso/.config", newroot);
 		if (access(p, F_OK) == 0) {

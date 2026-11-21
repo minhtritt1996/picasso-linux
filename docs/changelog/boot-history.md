@@ -2900,3 +2900,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
    - `systemctl suspend` with `rtcwake -d rtc1 -m no -s 7`: `suspend_stats/success=1`, `fail=0`, `PM: suspend entry (s2idle)` -> `PM: suspend exit`, `picasso-nvt-vendor` SRAM firmware reloaded (`fw info: ver 0x0a`), `hexagonrpcd` active again, Wi-Fi `5G` (`5240 MHz`) reconnected.
    - `build/out/initrd.cpio.gz`: `39264e4211be364dd2f8d682afd6cbe143213b324f57671e86d2b53bc3543f32`
    - `build/out/boot-linux-auto.img`: `40bd5341254d6e21d2089d2e02f9cce8a2927c3eaf274fb3a744f8f53123a326`
+
+4. **Bluetooth A2DP software volume & high-quality codec enablement (`initramfs/init.c`)**:
+   - Added `/run/wireplumber/wireplumber.conf.d/51-picasso-bluez.conf` (`bluez5.enable-hw-volume = false`, `bluez5.enable-sbc-xq = true`, `bluez5.codecs = [ sbc_xq aac aptx aptx_hd ldac sbc ]`) so Bluetooth speakers that fail BlueZ AVRCP `set_volume()` (`-107`) adjust cleanly via PipeWire `softVolumes`.
+   - Verified on hardware (`Loa Bose của Trí`, `AC:BF:71:FB:E1:3A`): `softVolumes=[0.274625, 0.274625]` at `65%`.
+   - `build/out/initrd.cpio.gz`: `22cf5c57fcdd6f7ef26e16b85a39a60a58c05389ae092e1deebe621934bfc49c`
+   - `build/out/boot-linux-auto.img`: `31f0be48ecca8731b7c6d1135b70b75b36ed9d6453442d00bba196a1e7c80035`
