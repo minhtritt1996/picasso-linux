@@ -2949,3 +2949,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
     - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `1067=fd`, `1068=30`, `1006=45` (`CHGR_TERMINATE`), `status=Full`, `capacity=100`, `voltage_now=4388285`, `current_now=-1525`.
     - `build/out/Image`: `fadab4667e10bae9772cfe9081d381e468844be84d2ebfde26503f6a2f42a0d3`
     - `build/out/boot-linux-auto.img`: `d38529c6e2efeb434726b1c29584d7fa529bed067a925cf5d438156aaed0a683`
+
+11. **Coulomb-counter SoC smoothing (`0016-power-supply-qcom-pm7250b-add-qg-battery.patch`)**:
+    - Added `pm7250b_bat_update_cc()` in `qcom_pm7250b_charger.c` integrating `current_now` over `ktime_get_boottime_ns()`, anchoring `charge_uah` to `4500000 uAh` at `POWER_SUPPLY_STATUS_FULL`, and blending gently with OCV only when drift exceeds `8%` (or after `>60 s` suspend gaps or near empty `<=3.5 V`).
+    - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `charge_now` stepped smoothly from `4136839` to `4136669 uAh` over 5 s at `~120–157 mA` (`capacity=92`).
+    - `build/out/Image`: `e42bc99f9f3218b4c1daf96ba119ad5629dbdde26092d6f20aa840dd68e75de6`
+    - `build/out/boot-linux-auto.img`: `2f7cb0c0e5059834839ff03d1856b5760f22fe51ea343a168a137d33a58d0c2a`

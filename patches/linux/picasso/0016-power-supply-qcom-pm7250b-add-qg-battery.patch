@@ -1,8 +1,17 @@
 diff --git a/drivers/power/supply/qcom_pm7250b_charger.c b/drivers/power/supply/qcom_pm7250b_charger.c
-index 480aa56f9..94f5378d4 100644
+index 480aa56f9..807661eb9 100644
 --- a/drivers/power/supply/qcom_pm7250b_charger.c
 +++ b/drivers/power/supply/qcom_pm7250b_charger.c
-@@ -44,6 +44,12 @@
+@@ -19,6 +19,8 @@
+ #include <linux/bits.h>
+ #include <linux/bitfield.h>
+ #include <linux/devm-helpers.h>
++#include <linux/ktime.h>
++#include <linux/math64.h>
+ #include <linux/mod_devicetable.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+@@ -44,6 +46,12 @@
  #define CHGR_CFG2			0x51
  #define  CHG_EN_SRC_BIT			BIT(7)
  #define  CHG_EN_POLARITY_BIT		BIT(6)
@@ -15,7 +24,7 @@ index 480aa56f9..94f5378d4 100644
  
  /* DCDC_BASE = CHGR_BASE + 0x100 */
  #define POWER_PATH_STATUS		0x10b
-@@ -51,8 +57,28 @@
+@@ -51,19 +59,44 @@
  #define  VALID_INPUT_POWER_SRC_BIT	BIT(0)
  
  /* USBIN_BASE = CHGR_BASE + 0x300 */
@@ -44,7 +53,9 @@ index 480aa56f9..94f5378d4 100644
  
  #define CHG_LIMIT_POLL_MS		20000
  #define CHG_LIMIT_AUTO_HYST		5	/* resume this far below the end threshold */
-@@ -61,6 +87,7 @@ struct pm7250b_chg {
++#define PM7250B_BAT_FULL_UAH		4500000LL
+ 
+ struct pm7250b_chg {
  	struct device *dev;
  	struct regmap *regmap;
  	struct power_supply *psy;
@@ -52,7 +63,13 @@ index 480aa56f9..94f5378d4 100644
  	struct power_supply *gauge;	/* optional, for the charge limit */
  	struct delayed_work limit_work;
  	struct mutex lock;	/* protects the fields below and the enable bit */
-@@ -107,9 +134,7 @@ static int pm7250b_chg_status(struct pm7250b_chg *chg, int *status)
++	s64 charge_uah;
++	u64 last_cc_ns;
++	bool cc_init;
+ 	bool user_inhibit;	/* userspace asked for inhibit-charge */
+ 	bool limit_hold;	/* charge limit reached */
+ 	u8 start_thr;		/* 0 = end threshold minus CHG_LIMIT_AUTO_HYST */
+@@ -107,9 +140,7 @@ static int pm7250b_chg_status(struct pm7250b_chg *chg, int *status)
  	stat = FIELD_GET(CHGR_STATUS_MASK, stat);
  
  	if (!online) {
@@ -63,7 +80,7 @@ index 480aa56f9..94f5378d4 100644
  		return 0;
  	}
  
-@@ -240,13 +265,49 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
+@@ -240,13 +271,46 @@ static void pm7250b_chg_limit_eval(struct pm7250b_chg *chg)
  	}
  }
  
@@ -95,6 +112,8 @@ index 480aa56f9..94f5378d4 100644
 +			     PM7250B_FAST_FCC_3500MA);
 +}
 +
++static int pm7250b_bat_update_cc(struct pm7250b_chg *chg);
++
  static void pm7250b_chg_limit_work(struct work_struct *work)
  {
  	struct pm7250b_chg *chg = container_of(to_delayed_work(work),
@@ -102,19 +121,14 @@ index 480aa56f9..94f5378d4 100644
  
  	mutex_lock(&chg->lock);
 -	pm7250b_chg_limit_eval(chg);
-+	if (chg->sw_ctrl) {
-+		regmap_write(chg->regmap, chg->base + CHGR_ADC_ITERM_UP_THD_MSB,
-+			     PM7250B_ITERM_220MA_MSB);
-+		regmap_write(chg->regmap, chg->base + CHGR_ADC_ITERM_UP_THD_LSB,
-+			     PM7250B_ITERM_220MA_LSB);
-+	}
 +	pm7250b_chg_tune_fast_charge(chg);
++	pm7250b_bat_update_cc(chg);
 +	if (chg->gauge)
 +		pm7250b_chg_limit_eval(chg);
  	mutex_unlock(&chg->lock);
  
  	schedule_delayed_work(&chg->limit_work,
-@@ -372,6 +433,213 @@ static const struct power_supply_desc pm7250b_chg_desc = {
+@@ -372,6 +436,258 @@ static const struct power_supply_desc pm7250b_chg_desc = {
  	.property_is_writeable = pm7250b_chg_writeable,
  };
  
@@ -242,12 +256,63 @@ index 480aa56f9..94f5378d4 100644
 +	return 0;
 +}
 +
++static int pm7250b_bat_update_cc(struct pm7250b_chg *chg)
++{
++	int ret, status, ocv_uv, ua = 0;
++	u64 now = ktime_get_boottime_ns();
++	s64 ocv_uah, delta_uah, diff;
++
++	ret = pm7250b_chg_status(chg, &status);
++	if (ret)
++		return ret;
++
++	ret = pm7250b_bat_ocv_uv(chg, &ocv_uv);
++	if (ret)
++		return ret;
++
++	ocv_uah = (s64)pm7250b_bat_capacity(ocv_uv, status) * 45000LL;
++
++	if (!chg->cc_init) {
++		chg->charge_uah = ocv_uah;
++		chg->last_cc_ns = now;
++		chg->cc_init = true;
++		return 0;
++	}
++
++	if (status == POWER_SUPPLY_STATUS_FULL) {
++		chg->charge_uah = PM7250B_BAT_FULL_UAH;
++		chg->last_cc_ns = now;
++		return 0;
++	}
++
++	if (now > chg->last_cc_ns) {
++		u64 dt_ns = now - chg->last_cc_ns;
++
++		if (dt_ns > 60ULL * NSEC_PER_SEC) {
++			/* Re-anchor after long sleep/suspend where current was not sampled. */
++			chg->charge_uah = (chg->charge_uah + ocv_uah) / 2;
++		} else if (pm7250b_bat_current_ua(chg, &ua) == 0) {
++			delta_uah = div64_s64((s64)ua * (s64)dt_ns, 3600000000000LL);
++			chg->charge_uah -= delta_uah;
++		}
++		chg->last_cc_ns = now;
++	}
++
++	/* Gently pull toward OCV only if drift exceeds 8% or near empty. */
++	diff = ocv_uah - chg->charge_uah;
++	if (ocv_uv <= 3500000 || diff > 360000LL || diff < -360000LL)
++		chg->charge_uah += div_s64(diff, 16);
++
++	chg->charge_uah = clamp_t(s64, chg->charge_uah, 0, PM7250B_BAT_FULL_UAH);
++	return 0;
++}
++
 +static int pm7250b_bat_get_property(struct power_supply *psy,
 +				    enum power_supply_property psp,
 +				    union power_supply_propval *val)
 +{
 +	struct pm7250b_chg *chg = power_supply_get_drvdata(psy);
-+	int ret, uv, status;
++	int ret;
 +
 +	switch (psp) {
 +	case POWER_SUPPLY_PROP_PRESENT:
@@ -279,23 +344,17 @@ index 480aa56f9..94f5378d4 100644
 +	case POWER_SUPPLY_PROP_CURRENT_NOW:
 +		return pm7250b_bat_current_ua(chg, &val->intval);
 +	case POWER_SUPPLY_PROP_CAPACITY:
-+		ret = pm7250b_chg_status(chg, &status);
-+		if (ret)
-+			return ret;
-+		ret = pm7250b_bat_ocv_uv(chg, &uv);
-+		if (ret)
-+			return ret;
-+		val->intval = pm7250b_bat_capacity(uv, status);
-+		return 0;
++		mutex_lock(&chg->lock);
++		ret = pm7250b_bat_update_cc(chg);
++		val->intval = DIV_ROUND_CLOSEST_ULL(chg->charge_uah, 45000);
++		mutex_unlock(&chg->lock);
++		return ret;
 +	case POWER_SUPPLY_PROP_CHARGE_NOW:
-+		ret = pm7250b_chg_status(chg, &status);
-+		if (ret)
-+			return ret;
-+		ret = pm7250b_bat_ocv_uv(chg, &uv);
-+		if (ret)
-+			return ret;
-+		val->intval = pm7250b_bat_capacity(uv, status) * 45000;
-+		return 0;
++		mutex_lock(&chg->lock);
++		ret = pm7250b_bat_update_cc(chg);
++		val->intval = chg->charge_uah;
++		mutex_unlock(&chg->lock);
++		return ret;
 +	default:
 +		return -EINVAL;
 +	}
@@ -328,7 +387,7 @@ index 480aa56f9..94f5378d4 100644
  static int pm7250b_chg_probe(struct platform_device *pdev)
  {
  	struct power_supply_config cfg = {};
-@@ -438,9 +706,20 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
+@@ -438,9 +754,20 @@ static int pm7250b_chg_probe(struct platform_device *pdev)
  		return dev_err_probe(dev, PTR_ERR(chg->psy),
  				     "failed to register power supply\n");
  
