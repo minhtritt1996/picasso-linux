@@ -2962,3 +2962,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
     - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `1061=46` (`3500 mA`), `1370=3c` (`3000 mA`), `current_now=-1729432 uA` (`-1.73 A` into battery at `4.27 V`).
     - `build/out/Image`: `cb5d22efa1d2806cc96c77d0dd53168142961abc59025144a9397746fc42e011`
     - `build/out/boot-linux-auto.img`: `194427493604bdb853a5ea916942d090244129f9ae8f5b20505c1c9a3137a616`
+
+13. **USB host class drivers (`configs/linux/picasso.config`)**:
+    - Enabled `CONFIG_USB_ACM=y`, `CONFIG_USB_NET_DRIVERS=y`, `CONFIG_USB_USBNET=y`, `CONFIG_USB_NET_CDCETHER=y`, `CONFIG_USB_NET_CDC_NCM=y`, `CONFIG_USB_NET_RNDIS_HOST=y` so USB OTG host mode can bind CDC ACM serial and CDC NCM/ECM/RNDIS network devices.
+    - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `dmesg` confirms `cdc_ether`, `cdc_ncm`, and `cdc_acm` drivers registered cleanly.
+    - `build/out/Image`: `0bba23cc576de7fc10f8a662f09c06b35f3aee01c7ea39243c4f22d1c894013a`
+    - `build/out/boot-linux-auto.img`: `0982c2a3d5a7185d3c24e92d73a892ae7e3d6fb57ab3ce3c5e6e124b528834e9`
