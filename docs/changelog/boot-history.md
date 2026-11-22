@@ -2955,3 +2955,10 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
     - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `charge_now` stepped smoothly from `4136839` to `4136669 uAh` over 5 s at `~120–157 mA` (`capacity=92`).
     - `build/out/Image`: `e42bc99f9f3218b4c1daf96ba119ad5629dbdde26092d6f20aa840dd68e75de6`
     - `build/out/boot-linux-auto.img`: `2f7cb0c0e5059834839ff03d1856b5760f22fe51ea343a168a137d33a58d0c2a`
+
+12. **Type-C 3.0 A / 1.5 A `ICL_OVERRIDE` fallback for non-BC1.2 chargers (`0016-power-supply-qcom-pm7250b-add-qg-battery.patch`)**:
+    - Observed charger stuck at `ICL = 500 mA` (`1370=0a`), `FCC = 1500 mA` (`1061=1e`), `current_now = -166 mA` when `APSD_RESULT_STATUS` reported `SDP` (`1308=02`) despite `TYPE_C_SNK_STATUS` reporting `SNK_RP_3P0_BIT` (`150b=3b`, `tcpm` `3.0 A`).
+    - Updated `pm7250b_chg_tune_fast_charge()` to fall back to `TYPEC_SNK_STATUS` (`0x50b`: `SNK_RP_3P0_BIT` -> `3000 mA`, `SNK_RP_1P5_BIT` -> `1500 mA`) and assert `ICL_OVERRIDE_BIT` (`0x342`) when needed, clearing it on standard ports.
+    - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `1061=46` (`3500 mA`), `1370=3c` (`3000 mA`), `current_now=-1729432 uA` (`-1.73 A` into battery at `4.27 V`).
+    - `build/out/Image`: `cb5d22efa1d2806cc96c77d0dd53168142961abc59025144a9397746fc42e011`
+    - `build/out/boot-linux-auto.img`: `194427493604bdb853a5ea916942d090244129f9ae8f5b20505c1c9a3137a616`
