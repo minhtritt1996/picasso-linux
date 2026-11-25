@@ -28,6 +28,8 @@
 #include <sys/wait.h>
 #include <sys/mman.h>
 #include <sys/reboot.h>
+#include <sys/syscall.h>
+#include <linux/reboot.h>
 #include <sys/utsname.h>
 #include <sys/sysmacros.h>
 #include <poll.h>
@@ -2337,8 +2339,23 @@ static void cmd(int fd, char *line)
 			close(f);
 		}
 		reboot(RB_AUTOBOOT);
+	} else if (!strncmp(line, "reboot ", 7)) {
+		const char *arg = line + 7;
+
+		while (*arg == ' ')
+			arg++;
+		if (!*arg) {
+			sync();
+			reboot(RB_AUTOBOOT);
+			return;
+		}
+		dprintf(fd, "rebooting (%s)\n", arg);
+		sync();
+		syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
+			LINUX_REBOOT_CMD_RESTART2, arg);
+		reboot(RB_AUTOBOOT);
 	} else if (!strcmp(line, "help")) {
-		dprintf(fd, "commands: reboot, help, uname, mem, cat FILE, ls DIR\n");
+		dprintf(fd, "commands: reboot [bootloader|recovery], help, uname, mem, cat FILE, ls DIR\n");
 	} else if (!strncmp(line, "dmesg", 5)) {
 		const char *pat = line[5] ? line + 5 : "";
 
