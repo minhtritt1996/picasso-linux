@@ -2968,3 +2968,9 @@ Verified on `/dev/disk/by-partlabel/boot` (`Linux picasso 7.3.5-00001-gfdb38e3cd
     - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): `dmesg` confirms `cdc_ether`, `cdc_ncm`, and `cdc_acm` drivers registered cleanly.
     - `build/out/Image`: `0bba23cc576de7fc10f8a662f09c06b35f3aee01c7ea39243c4f22d1c894013a`
     - `build/out/boot-linux-auto.img`: `0982c2a3d5a7185d3c24e92d73a892ae7e3d6fb57ab3ce3c5e6e124b528834e9`
+
+14. **`reboot [bootloader|recovery]` on `picasso>` USB console (`initramfs/init.c`)**:
+    - Updated `cmd()` in `initramfs/init.c` so `reboot bootloader` and `reboot recovery` call `syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART2, arg)` (`qcom-pon` `mode-bootloader = <0x2>`, `mode-recovery = <0x1>`).
+    - Verified on live hardware (`boot-linux-auto.img` flashed to `/dev/disk/by-partlabel/boot`): sending `reboot bootloader` on `/dev/ttyACM0` printed `picasso> rebooting (bootloader)` and entered fastboot (`fastboot devices` -> `f9f3d7b0 fastboot`); `fastboot reboot` returned cleanly to Linux (`/dev/ttyACM0` and `100.106.192.31` online).
+    - `build/out/initrd.cpio.gz`: `b4d8d2bda477920aef0bcf5801867cfde2e1aef612f96b65bed357b1e3b4ddf9`
+    - `build/out/boot-linux-auto.img`: `8b0aa0562127f6e3c9367e92a7b14f895da28e3bac6af96e38efcd433d5c3579`
